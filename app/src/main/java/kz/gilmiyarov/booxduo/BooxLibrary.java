@@ -45,10 +45,25 @@ final class BooxLibrary {
             if (!id.isEmpty()) return "id:" + id;
             return "name:" + name;
         }
+        boolean hasUsableProgress() {
+            // BOOX sometimes records 1/1 (100%) for books opened in a third-party
+            // reader. That is a placeholder, not evidence of a completed book.
+            return totalPages >= 3 && currentPage >= 0 && currentPage <= totalPages;
+        }
+        boolean normalizedProgress() {
+            // Some ONYX revisions store progress as thousandths rather than pages.
+            return totalPages == 1000 || totalPages == 10000;
+        }
+        int percent() {
+            if (!hasUsableProgress()) return -1;
+            return Math.min(100, Math.round(100f * currentPage / totalPages));
+        }
         String description() {
             String filename = !name.isEmpty() ? name : path;
-            String p = totalPages > 0 ? " · " + currentPage + "/" + totalPages
-                    : progress.isEmpty() ? "" : " · " + progress;
+            String p = hasUsableProgress()
+                    ? (normalizedProgress() ? " · " + percent() + "%"
+                            : " · " + currentPage + "/" + totalPages)
+                    : "";
             return filename + p;
         }
     }
