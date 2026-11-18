@@ -392,19 +392,9 @@ public final class MainActivity extends Activity {
         body.addView(readerCard(0, "РУСЛАН", "Моя книга", "Р"), margins(-1, 169, 0, 0, 0, 13));
         body.addView(readerCard(1, "АННА", "Книга Анны", "А"), margins(-1, 169, 0, 0, 0, 20));
 
-        TextView quickTitle = text("БЫСТРЫЙ ДОСТУП", 11, MUTED, true);
-        quickTitle.setLetterSpacing(.07f);
-        body.addView(quickTitle, margins(-1, -2, 0, 0, 0, 10));
-
-        LinearLayout shortcuts = horizontal();
-        body.addView(shortcuts, margins(-1, 45, 0, 0, 0, 0));
-        addShortcut(shortcuts, "Файлы", () -> showTab(1), true);
-        addShortcut(shortcuts, "Приложения", () -> showTab(2), true);
-        addShortcut(shortcuts, "Настройки", () -> showTab(3), false);
-
         LinearLayout spacer = vertical();
         body.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.5", 10, MUTED, false);
+        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.6", 10, MUTED, false);
         footer.setGravity(Gravity.CENTER);
         body.addView(footer, margins(-1, -2, 0, 23, 0, 0));
         showPage(scroll, 0);
@@ -722,39 +712,96 @@ public final class MainActivity extends Activity {
         LinearLayout[] output = new LinearLayout[1];
         ScrollView scroll = newSection(output);
         LinearLayout body = output[0];
-        sectionHeading(body, "Приложения", "Нажми, чтобы открыть; удерживай для информации и удаления");
-        EditText filter = new EditText(this);
-        filter.setSingleLine(true);
-        filter.setTextColor(INK);
-        filter.setTextSize(15);
-        filter.setHint("Поиск приложений");
-        body.addView(filter, margins(-1, 48, 0, 0, 0, 12));
-        LinearLayout results = vertical();
-        body.addView(results);
-        Runnable refresh = () -> {
-            results.removeAllViews();
-            String query = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
-            int count=0;
-            for (AppEntry app : apps) {
-                if (!app.description().toLowerCase(Locale.ROOT).contains(query)) continue;
-                count++;
-                TextView item = text(app.label, 15, INK, true);
-                item.setBackground(panel(PAPER, EDGE, 7));
-                item.setPadding(dp(13), dp(12), dp(13), dp(12));
-                item.setOnClickListener(v -> launchApp(app));
-                item.setOnLongClickListener(v -> {
-                    appDetails(app.component.getPackageName()); return true;
-                });
-                results.addView(item, margins(-1, 48, 0, 0, 0, 7));
+        sectionHeading(body, "Приложения", "Нажми для запуска · удерживай для управления");
+
+        EditText search = new EditText(this);
+        search.setSingleLine(true);
+        search.setTextSize(14);
+        search.setTextColor(INK);
+        search.setHint("Поиск приложений");
+        search.setBackground(panel(PAPER, EDGE, 7));
+        search.setPadding(dp(12), 0, dp(12), 0);
+        body.addView(search, margins(-1, 48, 0, 0, 0, 13));
+
+        LinearLayout grid = vertical();
+        body.addView(grid);
+
+        Runnable rebuild = () -> {
+            grid.removeAllViews();
+            String filter = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+            ArrayList<AppEntry> visible = new ArrayList<>();
+            for (AppEntry entry : apps) {
+                if (entry.description().toLowerCase(Locale.ROOT).contains(filter)) {
+                    visible.add(entry);
+                }
             }
-            if (count == 0) results.addView(text("Ничего не найдено", 13, MUTED, false));
+            if (visible.isEmpty()) {
+                grid.addView(text("Приложения не найдены", 13, MUTED, false),
+                        margins(-1, -2, 0, 4, 0, 0));
+                return;
+            }
+
+            PackageManager manager = getPackageManager();
+            final int columns = 3;
+            for (int offset = 0; offset < visible.size(); offset += columns) {
+                LinearLayout line = horizontal();
+                for (int col = 0; col < columns; col++) {
+                    int index = offset + col;
+                    if (index >= visible.size()) {
+                        line.addView(new View(this), new LinearLayout.LayoutParams(0, dp(110), 1));
+                        continue;
+                    }
+                    AppEntry app = visible.get(index);
+                    LinearLayout tile = vertical();
+                    tile.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                    tile.setPadding(dp(4), dp(9), dp(4), dp(4));
+                    tile.setBackground(panel(PAPER, EDGE, 7));
+
+                    ImageView appIcon = new ImageView(this);
+                    appIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                    try {
+                        appIcon.setImageDrawable(manager.getActivityIcon(app.component));
+                    } catch (PackageManager.NameNotFoundException ex) {
+                        try {
+                            appIcon.setImageDrawable(manager.getApplicationIcon(app.component.getPackageName()));
+                        } catch (PackageManager.NameNotFoundException ignored) {
+                            appIcon.setImageResource(android.R.drawable.sym_def_app_icon);
+                        }
+                    }
+                    LinearLayout.LayoutParams iconLayout =
+                            new LinearLayout.LayoutParams(dp(46), dp(46));
+                    iconLayout.gravity = Gravity.CENTER_HORIZONTAL;
+                    iconLayout.bottomMargin = dp(7);
+                    tile.addView(appIcon, iconLayout);
+
+                    TextView title = text(app.label, 12, INK, false);
+                    title.setGravity(Gravity.CENTER);
+                    title.setMaxLines(2);
+                    title.setEllipsize(TextUtils.TruncateAt.END);
+                    tile.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+                    tile.setOnClickListener(v -> launchApp(app));
+                    tile.setOnLongClickListener(v -> {
+                        appDetails(app.component.getPackageName());
+                        return true;
+                    });
+
+                    LinearLayout.LayoutParams layout =
+                            new LinearLayout.LayoutParams(0, dp(106), 1);
+                    if (col > 0) layout.leftMargin = dp(8);
+                    line.addView(tile, layout);
+                }
+                grid.addView(line, margins(-1, -2, 0, 0, 0, 8));
+            }
         };
-        filter.addTextChangedListener(new TextWatcher() {
-            public void beforeTextChanged(CharSequence s,int start,int count,int after) {}
-            public void onTextChanged(CharSequence s,int start,int before,int count) { refresh.run(); }
-            public void afterTextChanged(Editable e) {}
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after) { }
+            @Override public void onTextChanged(CharSequence s,int start,int before,int count) {
+                rebuild.run();
+            }
+            @Override public void afterTextChanged(Editable e) { }
         });
-        refresh.run();
+        rebuild.run();
         showPage(scroll, 2);
     }
 
@@ -802,7 +849,7 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.5 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.6 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
