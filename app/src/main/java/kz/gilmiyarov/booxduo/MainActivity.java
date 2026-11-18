@@ -54,7 +54,7 @@ import java.util.Locale;
 
 /**
  * Small, offline, stock-Android HOME replacement designed for e-paper.
- * No root, accessibility, storage, network, or all-packages permissions.
+ * No root, network, or all-packages permissions. Optional storage access is user-granted.
  *
  * A launcher can reliably start an app, but it cannot read the other app's
  * private book-progress data. ReadEra/AlReaderX control their resume behavior.
@@ -71,6 +71,12 @@ public final class MainActivity extends Activity {
     private static final int PICK_BROWSE_FOLDER = 510;
     private int activeTab = 0;
     private final List<String> folderTrail = new ArrayList<>();
+    // The catalog is built on a worker thread to avoid freezing the e-paper UI.
+    private FilesCatalog.Snapshot storageSnapshot;
+    private boolean storageScanBusy = false;
+    private int fileCategory = -1;
+    private File currentStorageFolder = null;
+    private boolean priorFullAccess = false;
 
     private final List<AppEntry> apps = new ArrayList<>();
     private SharedPreferences prefs;
@@ -105,6 +111,13 @@ public final class MainActivity extends Activity {
             scanApps();
             autoPickReaders();
             autoPickFileManager();
+            boolean full = FilesCatalog.canRead();
+            if (full != priorFullAccess) {
+                storageSnapshot = null;
+                currentStorageFolder = null;
+                fileCategory = -1;
+                priorFullAccess = full;
+            }
             showTab(activeTab);
         }
     }
@@ -189,6 +202,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openReader(int slot) {
+        prefs.edit().putLong("last_launch_" + slot, System.currentTimeMillis()).apply();
         AppEntry selected = selectedApp(slot);
         if (selected == null) {
             Toast.makeText(this, "Сначала выбери читалку", Toast.LENGTH_SHORT).show();
@@ -317,7 +331,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout spacer = vertical();
         body.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.3", 10, MUTED, false);
+        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.4", 10, MUTED, false);
         footer.setGravity(Gravity.CENTER);
         body.addView(footer, margins(-1, -2, 0, 23, 0, 0));
         showPage(scroll, 0);
@@ -385,11 +399,44 @@ public final class MainActivity extends Activity {
         body.addView(simpleAction(name, action), margins(-1, 46, 0, 0, 0, 9));
     }
 
+    private void askFilesAccess() {
+        new AlertDialog.Builder(this)
+            .setTitle("Доступ к файлам")
+            .setMessage("Чтобы категории показывали реальные файлы и количество, оболочке нужен доступ к общей памяти устройства. Используется только для просмотра и открытия файлов. Ничего не удаляется и никуда не отправляется.")
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Открыть разрешение", (d,w) -> {
+                try {
+                    Intent access = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                    access.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(access);
+                } catch (Exception e) {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                    } catch (Exception ex) {
+                        Toast.makeText(this, "На этой прошивке доступ недоступен. Выбери конкретную папку ниже.", Toast.LENGTH_LONG).show();
+                    }
+                }
+            }).show();
+    }
+
+    private void scanStorage() {
+        if (!FilesCatalog.canRead() || storageScanBusy) return;
+        storageScanBusy = true;
+        new Thread(() -> {
+            FilesCatalog.Snapshot result = FilesCatalog.scan();
+            runOnUiThread(() -> {
+                storageSnapshot = result;
+                storageScanBusy = false;
+                if (!isFinishing() && activeTab == 1) renderFileTab();
+            });
+        }, "boox-file-index").start();
+    }
+
     private void renderFileTab() {
         LinearLayout[] output = new LinearLayout[1];
         ScrollView scroll = newSection(output);
         LinearLayout body = output[0];
-        sectionHeading(body, "Внутренняя память", "Книги, загрузки и личные файлы");
+        sectionHeading(body, "Внутренняя память", "Категории, папки и файлы");
         try {
             StatFs stat = new StatFs(Environment.getExternalStorageDirectory().getAbsolutePath());
             long free = stat.getAvailableBytes();
@@ -404,88 +451,163 @@ public final class MainActivity extends Activity {
             body.addView(memory, margins(-1, -2, 0, 0, 0, 16));
         } catch (Exception ignored) { }
 
-        body.addView(text("ТИПЫ ФАЙЛОВ", 11, MUTED, true), margins(-1, -2, 0, 0, 0, 8));
-        String[] categories = {"Документы", "Изображения", "Аудио", "Видео", "Загрузки", "APK"};
-        String[] types = {"application/*", "image/*", "audio/*", "video/*", "*/*",
-                "application/vnd.android.package-archive"};
-        for (int row = 0; row < 2; row++) {
-            LinearLayout gridRow = horizontal();
-            for (int col = 0; col < 3; col++) {
-                final int index = row * 3 + col;
-                LinearLayout tile = vertical();
-                tile.setGravity(Gravity.CENTER);
-                tile.setBackground(panel(PAPER, EDGE, 7));
-                TextView graphic = text(new String[]{"DOC", "IMG", "AUD", "VID", "DL", "APK"}[index],
-                    17, INK, true);
-                graphic.setGravity(Gravity.CENTER);
-                tile.addView(graphic, margins(-1, -2, 0, 0, 0, 6));
-                TextView caption = text(categories[index], 11, MUTED, false);
-                caption.setGravity(Gravity.CENTER);
-                tile.addView(caption);
-                tile.setOnClickListener(v -> {
-                    if (index == 4) selectFolder();
-                    else openFileCategory(types[index]);
+        if (FilesCatalog.canRead()) {
+            if (storageSnapshot == null && !storageScanBusy) scanStorage();
+
+            if (fileCategory == -1 && currentStorageFolder == null) {
+                body.addView(text("КАТЕГОРИИ", 11, MUTED, true), margins(-1, -2, 0, 0, 0, 9));
+                for (int row = 0; row < 3; row++) {
+                    LinearLayout tiles = horizontal();
+                    for (int col = 0; col < (row == 2 ? 2 : 3); col++) {
+                        int index = row * 3 + col;
+                        final int selected = index;
+                        LinearLayout tile = vertical();
+                        tile.setGravity(Gravity.CENTER);
+                        tile.setBackground(panel(PAPER, EDGE, 6));
+                        TextView symbol = text(FilesCatalog.SIGNS[index], 18, INK, true);
+                        symbol.setGravity(Gravity.CENTER);
+                        tile.addView(symbol, margins(-1, -2, 0, 0, 0, 4));
+                        TextView label = text(FilesCatalog.LABELS[index], 11, INK, false);
+                        label.setGravity(Gravity.CENTER);
+                        tile.addView(label);
+                        int count = storageSnapshot == null ? -1 : storageSnapshot.count(index);
+                        TextView number = text(count < 0 ? "…" : String.valueOf(count), 10, MUTED, false);
+                        number.setGravity(Gravity.CENTER);
+                        tile.addView(number);
+                        tile.setOnClickListener(v -> {
+                            fileCategory = selected;
+                            currentStorageFolder = null;
+                            renderFileTab();
+                        });
+                        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(102), 1);
+                        if (col > 0) p.leftMargin = dp(8);
+                        tiles.addView(tile, p);
+                    }
+                    body.addView(tiles, margins(-1, -2, 0, 0, 0, 8));
+                }
+                body.addView(text("ПАПКИ", 11, MUTED, true), margins(-1, -2, 0, 15, 0, 8));
+                sectionButton(body, "Все папки устройства", () -> {
+                    currentStorageFolder = FilesCatalog.root();
+                    fileCategory = -1;
+                    renderFileTab();
                 });
-                LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, dp(100), 1);
-                if (col != 2) cell.rightMargin = dp(8);
-                gridRow.addView(tile, cell);
+                File downloads = new File(FilesCatalog.root(), "Download");
+                if (downloads.isDirectory()) {
+                    sectionButton(body, "Открыть папку Download", () -> {
+                        currentStorageFolder = downloads;
+                        fileCategory = -1;
+                        renderFileTab();
+                    });
+                }
+                sectionButton(body, "Обновить количество файлов", () -> {
+                    storageSnapshot = null;
+                    scanStorage();
+                    renderFileTab();
+                });
+                sectionButton(body, "Открыть родной файловый менеджер BOOX", this::openFiles);
+            } else {
+                final boolean byCategory = fileCategory >= 0;
+                sectionButton(body, "← К категориям", () -> {
+                    fileCategory = -1;
+                    currentStorageFolder = null;
+                    renderFileTab();
+                });
+                String title = byCategory ? FilesCatalog.LABELS[fileCategory] :
+                        currentStorageFolder.getName().isEmpty() ? "Память" : currentStorageFolder.getName();
+                body.addView(text(title, 19, INK, true), margins(-1, -2, 0, 9, 0, 6));
+                if (!byCategory && !currentStorageFolder.equals(FilesCatalog.root())) {
+                    sectionButton(body, "← На уровень выше", () -> {
+                        File up = currentStorageFolder.getParentFile();
+                        currentStorageFolder = up == null ? FilesCatalog.root() : up;
+                        renderFileTab();
+                    });
+                }
+                if (byCategory && storageSnapshot == null) {
+                    body.addView(text("Индексирую файлы…", 12, MUTED, false));
+                } else {
+                    List<File> listing = byCategory
+                            ? storageSnapshot.groups[fileCategory]
+                            : FilesCatalog.directory(currentStorageFolder);
+                    body.addView(text("Элементов: " + listing.size(), 12, MUTED, false),
+                            margins(-1, -2, 0, 0, 0, 9));
+                    int max = Math.min(listing.size(), 230);
+                    for (int i=0; i<max; i++) {
+                        File file = listing.get(i);
+                        String name = file.isDirectory() ? "[Папка] " + file.getName() : file.getName();
+                        TextView item = text(name, 13, INK, false);
+                        item.setPadding(dp(12), dp(10), dp(12), dp(10));
+                        item.setBackground(panel(PAPER, EDGE, 5));
+                        item.setOnClickListener(v -> {
+                            if (file.isDirectory()) {
+                                currentStorageFolder = file;
+                                fileCategory = -1;
+                                renderFileTab();
+                            } else {
+                                openDocument(SharedFileProvider.uriFor(file), FilesCatalog.mime(file));
+                            }
+                        });
+                        body.addView(item, margins(-1, -2, 0, 0, 0, 6));
+                    }
+                    if (listing.isEmpty()) body.addView(text("Здесь пока нет файлов", 12, MUTED, false));
+                    if (listing.size() > max) body.addView(text("Показаны первые " + max + " файлов по дате или названию", 12, MUTED, false));
+                }
             }
-            body.addView(gridRow, margins(-1, -2, 0, 0, 0, 8));
+        } else {
+            body.addView(text("Для отображения количества и списка файлов нужен доступ к общей памяти.", 13, INK, false),
+                    margins(-1, -2, 0, 0, 0, 12));
+            sectionButton(body, "Разрешить просмотр файлов", this::askFilesAccess);
+            body.addView(text("Если прошивка BOOX не откроет разрешение, можно выбрать отдельную папку:", 12, MUTED, false),
+                    margins(-1, -2, 0, 10, 0, 8));
+            sectionButton(body, "Выбрать папку", this::selectFolder);
+            sectionButton(body, "Родной файловый менеджер BOOX", this::openFiles);
+            renderGrantedFolder(body);
         }
-        body.addView(text("МОИ ПАПКИ", 11, MUTED, true), margins(-1, -2, 0, 14, 0, 6));
-        sectionButton(body, "Выбрать папку для просмотра", this::selectFolder);
-        sectionButton(body, "Открыть менеджер BOOX", this::openFiles);
+        showPage(scroll, 1);
+    }
+
+    private void renderGrantedFolder(LinearLayout body) {
         String tree = prefs.getString("browse_tree", null);
-        if (tree != null) {
+        if (tree == null) return;
+        try {
             Uri treeUri = Uri.parse(tree);
             String folder = folderTrail.isEmpty() ? DocumentsContract.getTreeDocumentId(treeUri)
-                    : folderTrail.get(folderTrail.size() - 1);
-            if (folderTrail.size() > 1) {
-                sectionButton(body, "← Назад к предыдущей папке", () -> {
-                    folderTrail.remove(folderTrail.size() - 1);
+                    : folderTrail.get(folderTrail.size()-1);
+            if (folderTrail.size()>1) {
+                sectionButton(body, "← На уровень выше", () -> {
+                    folderTrail.remove(folderTrail.size()-1);
                     renderFileTab();
                 });
             }
-            body.addView(text("СОДЕРЖИМОЕ ПАПКИ", 11, MUTED, true), margins(-1, -2, 0, 8, 0, 8));
-            try {
-                Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folder);
-                ArrayList<FileItem> entries = new ArrayList<>();
-                String[] projection = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                        DocumentsContract.Document.COLUMN_MIME_TYPE};
-                try (Cursor c = getContentResolver().query(children, projection, null, null, null)) {
-                    if (c != null) {
-                        while (c.moveToNext() && entries.size() < 350) {
-                            entries.add(new FileItem(c.getString(0), c.getString(1), c.getString(2)));
-                        }
-                    }
+            body.addView(text("ВЫБРАННАЯ ПАПКА", 12, INK, true));
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folder);
+            ArrayList<FileItem> entries = new ArrayList<>();
+            String[] fields = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE};
+            try (Cursor c=getContentResolver().query(children, fields, null, null, null)) {
+                if (c!=null) {
+                    while (c.moveToNext() && entries.size()<300)
+                        entries.add(new FileItem(c.getString(0),c.getString(1),c.getString(2)));
                 }
-                Collections.sort(entries, (a,b) -> {
-                    if (a.isFolder() != b.isFolder()) return a.isFolder() ? -1 : 1;
-                    return a.name.compareToIgnoreCase(b.name);
-                });
-                if (entries.isEmpty()) body.addView(text("Папка пуста", 13, MUTED, false));
-                for (FileItem f : entries) {
-                    TextView file = text((f.isFolder() ? "ПАПКА  " : "ФАЙЛ  ") + f.name, 13, INK, false);
-                    file.setPadding(dp(12), dp(11), dp(12), dp(11));
-                    file.setBackground(panel(PAPER, EDGE, 4));
-                    file.setOnClickListener(v -> {
-                        if (f.isFolder()) {
-                            folderTrail.add(f.id);
-                            renderFileTab();
-                        } else {
-                            openDocument(DocumentsContract.buildDocumentUriUsingTree(treeUri, f.id), f.mime);
-                        }
-                    });
-                    body.addView(file, margins(-1, -2, 0, 0, 0, 6));
-                }
-            } catch (Exception e) {
-                body.addView(text("Нет доступа к папке. Выбери её повторно.", 13, MUTED, false));
             }
-        } else {
-            body.addView(text("Android 11 разрешает просмотр выбранных папок. Для полного доступа к памяти можно открыть менеджер BOOX.", 12, MUTED, false));
+            Collections.sort(entries,(a,b)->{
+                if(a.isFolder()!=b.isFolder()) return a.isFolder()?-1:1;
+                return a.name.compareToIgnoreCase(b.name);
+            });
+            for (FileItem item:entries) {
+                TextView line=text((item.isFolder() ? "[Папка] " : "") + item.name,13,INK,false);
+                line.setPadding(dp(12),dp(10),dp(12),dp(10));
+                line.setBackground(panel(PAPER,EDGE,5));
+                line.setOnClickListener(v-> {
+                    if (item.isFolder()) {
+                        folderTrail.add(item.id); renderFileTab();
+                    } else openDocument(DocumentsContract.buildDocumentUriUsingTree(treeUri,item.id),item.mime);
+                });
+                body.addView(line,margins(-1,-2,0,0,0,6));
+            }
+        } catch(Exception e) {
+            body.addView(text("Выбранная папка недоступна. Выбери её заново.",12,MUTED,false));
         }
-        showPage(scroll, 1);
     }
 
     private static final class FileItem {
@@ -517,6 +639,7 @@ public final class MainActivity extends Activity {
     private void openDocument(Uri uri, String mime) {
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setDataAndType(uri, mime);
+        intent.setClipData(ClipData.newUri(getContentResolver(), "book", uri));
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try { startActivity(Intent.createChooser(intent, "Открыть файл")); }
         catch (Exception e) { Toast.makeText(this, "Не найдено приложение для этого файла", Toast.LENGTH_LONG).show(); }
@@ -597,13 +720,18 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.3 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.4 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
 
     @Override public void onBackPressed() {
-        if (activeTab == 1 && folderTrail.size() > 1) {
+        if (activeTab == 1 && (fileCategory >= 0 || currentStorageFolder != null)) {
+            if (currentStorageFolder != null && !currentStorageFolder.equals(FilesCatalog.root())) {
+                currentStorageFolder = currentStorageFolder.getParentFile();
+            } else { currentStorageFolder = null; fileCategory = -1; }
+            renderFileTab();
+        } else if (activeTab == 1 && folderTrail.size() > 1) {
             folderTrail.remove(folderTrail.size() - 1);
             renderFileTab();
         } else if (activeTab != 0) {
@@ -670,6 +798,28 @@ public final class MainActivity extends Activity {
         appLabel.setMaxLines(1);
         appLabel.setEllipsize(TextUtils.TruncateAt.END);
         info.addView(appLabel, margins(-1, -2, 0, 0, 0, 4));
+
+        int current = prefs.getInt("page_" + slot, 0);
+        int total = prefs.getInt("total_" + slot, 0);
+        if (current > 0 && total >= current) {
+            int percent = Math.min(100, Math.round(100f * current / total));
+            info.addView(text("Страница " + current + "/" + total + " · " + percent + "% (вручную)",
+                    11, MUTED, false), margins(-1, -2, 0, 3, 0, 4));
+            LinearLayout progress = horizontal();
+            progress.setBackgroundColor(WASH);
+            View filled = new View(this);
+            filled.setBackgroundColor(INK);
+            progress.addView(filled, new LinearLayout.LayoutParams(0, dp(4), percent));
+            progress.addView(new View(this), new LinearLayout.LayoutParams(0, dp(4), 100-percent));
+            info.addView(progress, margins(-1, 4, 0, 0, 0, 5));
+        }
+        long lastLaunch = prefs.getLong("last_launch_" + slot, 0);
+        if (lastLaunch > 0) {
+            String when = new SimpleDateFormat("dd.MM.yyyy HH:mm", new Locale("ru", "RU"))
+                    .format(new Date(lastLaunch));
+            info.addView(text("Запуск через оболочку: " + when, 10, MUTED, false),
+                    margins(-1, -2, 0, 1, 0, 5));
+        }
 
         View spacer = new View(this);
         info.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -774,6 +924,8 @@ public final class MainActivity extends Activity {
             direct.setText("Открывать закреплённую книгу сразу: " + (next ? "ДА" : "НЕТ"));
         });
         parent.addView(direct, margins(-1, 43, 0, 0, 0, 5));
+        parent.addView(simpleAction("Указать страницы и прогресс вручную", () -> editProgress(slot)),
+                margins(-1, 43, 0, 0, 0, 5));
         parent.addView(simpleAction("Поставить свою обложку (картинка)", () -> pickCover(slot)),
                 margins(-1, 43, 0, 0, 0, 5));
         parent.addView(simpleAction("Убрать обложку", () -> {
@@ -782,6 +934,46 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "Обложка удалена", Toast.LENGTH_SHORT).show();
         }), margins(-1, 43, 0, 0, 0, 4));
         parent.addView(separator(), margins(-1, 1, 0, 13, 0, 0));
+    }
+
+    private void editProgress(int slot) {
+        LinearLayout fields = vertical();
+        fields.setPadding(dp(22), dp(5), dp(22), 0);
+        EditText current = new EditText(this);
+        current.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        current.setSingleLine(true);
+        current.setHint("Страница сейчас");
+        int p = prefs.getInt("page_" + slot, 0);
+        if (p > 0) current.setText(String.valueOf(p));
+        EditText total = new EditText(this);
+        total.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        total.setSingleLine(true);
+        total.setHint("Всего страниц");
+        int t = prefs.getInt("total_" + slot, 0);
+        if (t > 0) total.setText(String.valueOf(t));
+        fields.addView(current, margins(-1, 47, 0, 0, 0, 8));
+        fields.addView(total, margins(-1, 47, 0, 0, 0, 8));
+        fields.addView(text("Эти значения не синхронизируются с ReadEra и AlReaderX.",
+                12, MUTED, false), margins(-1, -2, 0, 0, 0, 3));
+        new AlertDialog.Builder(this)
+                .setTitle("Прогресс чтения")
+                .setView(fields)
+                .setNegativeButton("Отмена", null)
+                .setNeutralButton("Очистить", (d,w) -> {
+                    prefs.edit().remove("page_" + slot).remove("total_" + slot).apply();
+                    showTab(activeTab);
+                })
+                .setPositiveButton("Сохранить", (d,w) -> {
+                    try {
+                        int now = Integer.parseInt(current.getText().toString().trim());
+                        int all = Integer.parseInt(total.getText().toString().trim());
+                        if (now < 1 || all < now) throw new NumberFormatException();
+                        prefs.edit().putInt("page_" + slot, now).putInt("total_" + slot, all).apply();
+                        showTab(activeTab);
+                    } catch (NumberFormatException e) {
+                        Toast.makeText(this, "Укажи две положительные страницы (текущая не больше общей)", Toast.LENGTH_LONG).show();
+                    }
+                }).show();
     }
 
     private View simpleAction(String title, Runnable action) {
