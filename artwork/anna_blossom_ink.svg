@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="480" viewBox="0 0 1000 480">
+<!-- Transparent black/gray botanical line art; Android supplies the white background. -->
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<g stroke="#272727" stroke-width="3" opacity=".89">
+<path d="M776-14C789 64 836 118 987 185"/>
+<path d="M784 5C852 27 893 46 973 48M821 85C870 81 930 65 995 33"/>
+<path d="M847 126C877 146 923 151 969 140"/>
+</g>
+<g stroke="#555555" stroke-width="2.3">
+<path d="M823 41c-25-25-25-47-8-65 17 20 19 43 8 65z"/>
+<path d="M859 58c20-30 49-33 71-19-18 20-42 30-71 19z"/>
+<path d="M851 112c-25-30-31-50-21-75 21 14 33 40 21 75z"/>
+<path d="M909 146c18-29 47-33 73-23-22 24-44 32-73 23z"/>
+<path d="M945 72c14-21 34-26 55-15-16 20-32 26-55 15z"/>
+</g>
+<g fill="#D4D4D4" stroke="#2C2C2C" stroke-width="2">
+<ellipse cx="877" cy="92" rx="17" ry="30" transform="rotate(-15 877 92)"/>
+<ellipse cx="877" cy="92" rx="17" ry="30" transform="rotate(57 877 92)"/>
+<ellipse cx="877" cy="92" rx="17" ry="30" transform="rotate(129 877 92)"/>
+<ellipse cx="877" cy="92" rx="17" ry="30" transform="rotate(201 877 92)"/>
+<ellipse cx="877" cy="92" rx="17" ry="30" transform="rotate(273 877 92)"/>
+<circle cx="877" cy="92" r="10" fill="#FFFFFF"/>
+<ellipse cx="959" cy="152" rx="11" ry="21"/>
+<ellipse cx="959" cy="152" rx="11" ry="21" transform="rotate(72 959 152)"/>
+<ellipse cx="959" cy="152" rx="11" ry="21" transform="rotate(144 959 152)"/>
+<ellipse cx="959" cy="152" rx="11" ry="21" transform="rotate(216 959 152)"/>
+<ellipse cx="959" cy="152" rx="11" ry="21" transform="rotate(288 959 152)"/>
+<circle cx="959" cy="152" r="6" fill="#FFFFFF"/>
+</g>
+<g stroke="#4B4B4B" stroke-width="3">
+<path d="M32 445L170 425 283 438 310 455 158 476 32 458z"/>
+<path d="M32 445v-36l128-18 147 18v46M32 409l126 12 149-12M32 445l126 14 149-20"/>
+<path d="M59 394l91-19 131 17 20 20-141 9-101-15z"/>
+<path d="M59 394v-27l94-21 133 16v30M59 367l99 12 128-17"/>
+<path d="M80 355l77-20 100 11 28 16-127 17-78-13z"/>
+<path d="M80 355v-25l83-15 94 7v24M80 330l83 12 94-20"/>
+</g>
+<g stroke="#777777" stroke-width="2">
+<path d="M352 468C440 461 536 463 625 471"/>
+<path d="M31 472c142-15 301 7 439 3"/>
+</g>
+<g stroke="#373737" stroke-width="3">
+<path d="M729 350h147l-13 94c-4 19-26 27-64 27s-62-12-64-31z"/>
+<path d="M877 364c61-12 70 21 55 50-10 17-31 23-60 16"/>
+<path d="M889 380c29-5 43 8 33 27-10 16-27 16-46 15"/>
+<ellipse cx="802" cy="350" rx="74" ry="14"/>
+<path d="M753 351c29 9 78 9 107-1"/>
+<path d="M713 471c40-11 134-14 194-5"/>
+</g>
+<g stroke="#9C9C9C" stroke-width="2.5">
+<path d="M773 333c-18-19 19-35 3-59-7-12-6-24 4-36"/>
+<path d="M814 332c-22-26 13-40-4-63-9-10-9-24-2-37"/>
+<path d="M844 333c-20-23 16-35 3-59"/>
+</g>
+<g stroke="#9C9C9C" stroke-width="1.5" opacity=".9">
+<path d="M39 125c36-25 65-22 106 0M35 145c43-25 90-21 131-3"/>
+<path d="M40 96h6m-3-3v6M173 55h7m-3-3v7"/>
+</g>
+</g>
+</svg>
