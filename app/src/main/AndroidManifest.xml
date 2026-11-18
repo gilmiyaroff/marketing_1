@@ -7,6 +7,8 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Read-only query access to BOOX native library, if exported on this model. -->
+        <provider android:authorities="com.onyx.content.database.ContentProvider" />
     </queries>
 
     <!-- This is an optional, user-enabled permission for the custom file manager. -->
