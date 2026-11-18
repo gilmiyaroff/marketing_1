@@ -21,6 +21,9 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.BatteryManager;
+import android.os.Build;
+import android.content.IntentFilter;
 import android.provider.Settings;
 import android.provider.DocumentsContract;
 import android.os.Environment;
@@ -81,6 +84,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_FILE_FROM_STORAGE = 430;
     private static final int PICK_BROWSE_FOLDER = 510;
     private int activeTab = 0;
+    private boolean readingSettingsOpen = false;
     private final List<String> folderTrail = new ArrayList<>();
     // The catalog is built on a worker thread to avoid freezing the e-paper UI.
     private FilesCatalog.Snapshot storageSnapshot;
@@ -1218,11 +1222,230 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class SettingsItem {
+        final String name, glyph;
+        final Runnable action;
+        SettingsItem(String name, String glyph, Runnable action) {
+            this.name=name; this.glyph=glyph; this.action=action;
+        }
+    }
+
+    private SettingsItem setting(String name, String glyph, Runnable action) {
+        return new SettingsItem(name, glyph, action);
+    }
+
+    private void settingsGrid(LinearLayout parent, String group, SettingsItem... items) {
+        TextView header=text(group, 11, MUTED, true);
+        header.setLetterSpacing(.08f);
+        parent.addView(header, margins(-1,-2,0,17,0,10));
+        final int cols=4;
+        for (int offset=0;offset<items.length;offset+=cols) {
+            LinearLayout line=horizontal();
+            for (int col=0;col<cols;col++) {
+                int index=offset+col;
+                if (index>=items.length) {
+                    line.addView(new View(this),new LinearLayout.LayoutParams(0,dp(104),1));
+                    continue;
+                }
+                SettingsItem item=items[index];
+                LinearLayout tile=vertical();
+                tile.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                tile.setPadding(dp(2),dp(7),dp(2),dp(5));
+                SettingsGlyph glyph=new SettingsGlyph(this,item.glyph);
+                LinearLayout.LayoutParams glyphParams=new LinearLayout.LayoutParams(dp(37),dp(37));
+                glyphParams.gravity=Gravity.CENTER_HORIZONTAL;
+                glyphParams.bottomMargin=dp(6);
+                tile.addView(glyph,glyphParams);
+
+                TextView name=text(item.name,11,INK,false);
+                name.setGravity(Gravity.CENTER);
+                name.setMaxLines(2);
+                name.setEllipsize(TextUtils.TruncateAt.END);
+                tile.addView(name,new LinearLayout.LayoutParams(-1,-2));
+                tile.setOnClickListener(v -> item.action.run());
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(104),1);
+                line.addView(tile,p);
+            }
+            parent.addView(line,margins(-1,-2,0,0,0,3));
+        }
+    }
+
+    private void openSystemPanel(String action, String what) {
+        try {
+            startActivity(new Intent(action));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_SETTINGS));
+                Toast.makeText(this,
+                    "Прямой вход в «"+what+"» недоступен. Открой раздел в системных настройках.",
+                    Toast.LENGTH_LONG).show();
+            } catch (Exception e2) {
+                new AlertDialog.Builder(this)
+                    .setTitle(what)
+                    .setMessage("Прошивка BOOX не позволяет открыть этот раздел извне.")
+                    .setPositiveButton("ОК",null).show();
+            }
+        }
+    }
+
+    private void nativeBooxSettings(String destination) {
+        new AlertDialog.Builder(this)
+            .setTitle(destination)
+            .setMessage("Это фирменный раздел BOOX. На Darwin 9 стороннее приложение не всегда может открыть его напрямую. После перехода найди пункт «"+destination+"» в родных настройках.")
+            .setNegativeButton("Отмена",null)
+            .setPositiveButton("Открыть настройки", (d,w) ->
+                    openSystemPanel(Settings.ACTION_SETTINGS, destination))
+            .show();
+    }
+
+    private void openUnknownSources() {
+        try {
+            Intent i=new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+            i.setData(Uri.parse("package:"+getPackageName()));
+            startActivity(i);
+        } catch (Exception e) {
+            openSystemPanel(Settings.ACTION_SECURITY_SETTINGS,"Установка APK");
+        }
+    }
+
+    private void showDeviceStorage() {
+        LinearLayout[] output=new LinearLayout[1];
+        ScrollView scroll=newSection(output);
+        LinearLayout body=output[0];
+        sectionHeading(body,"Память устройства","Хранилище и доступные файлы");
+
+        try {
+            StatFs stat=new StatFs(Environment.getExternalStorageDirectory().getAbsolutePath());
+            long total=stat.getTotalBytes();
+            long free=stat.getAvailableBytes();
+            long used=Math.max(0,total-free);
+            LinearLayout panel=vertical();
+            panel.setPadding(dp(15),dp(16),dp(15),dp(16));
+            panel.setBackground(panel(WASH,EDGE,9));
+            panel.addView(text("Внутреннее хранилище",16,INK,true),
+                    margins(-1,-2,0,0,0,7));
+            panel.addView(text("Использовано: "+Formatter.formatShortFileSize(this,used),
+                    15,INK,false),margins(-1,-2,0,0,0,4));
+            panel.addView(text("Доступно: "+Formatter.formatShortFileSize(this,free)
+                    +" из "+Formatter.formatShortFileSize(this,total),
+                    12,MUTED,false),margins(-1,-2,0,0,0,11));
+            int percent=total<=0?0:(int)Math.max(0,Math.min(100,used*100L/total));
+            LinearLayout bar=horizontal();
+            bar.setBackgroundColor(0xffdddddd);
+            View filled=new View(this);filled.setBackgroundColor(INK);
+            bar.addView(filled,new LinearLayout.LayoutParams(0,dp(9),percent));
+            bar.addView(new View(this),new LinearLayout.LayoutParams(0,dp(9),100-percent));
+            panel.addView(bar,margins(-1,9,0,0,0,0));
+            body.addView(panel,margins(-1,-2,0,0,0,14));
+        } catch (Exception e) {
+            body.addView(text("Не удалось прочитать объём хранилища",13,MUTED,false));
+        }
+        sectionButton(body,"Открыть файлы",()->showTab(1));
+        sectionButton(body,"Системные настройки памяти",()->
+                openSystemPanel(Settings.ACTION_INTERNAL_STORAGE_SETTINGS,"Хранилище"));
+        sectionButton(body,"Разрешения на доступ к файлам",this::askFilesAccess);
+        body.addView(text("Показатели относятся к доступному внутреннему разделу памяти, а не к облачному хранилищу.",12,MUTED,false));
+        sectionButton(body,"← Все настройки",this::renderSettingsTab);
+        showPage(scroll,3);
+    }
+
     private void renderSettingsTab() {
+        readingSettingsOpen = false;
+        LinearLayout[] output=new LinearLayout[1];
+        ScrollView scroll=newSection(output);
+        LinearLayout body=output[0];
+
+        body.addView(text("НАСТРОЙКИ УСТРОЙСТВА",10,MUTED,true),
+                margins(-1,-2,0,0,0,4));
+        body.addView(text("Настройки",25,INK,true),
+                margins(-1,-2,0,0,0,12));
+
+        LinearLayout device=vertical();
+        device.setPadding(dp(13),dp(12),dp(13),dp(13));
+        device.setBackground(panel(WASH,EDGE,8));
+        String model=Build.MODEL==null?"ONYX BOOX":Build.MODEL;
+        device.addView(text(model.toUpperCase(Locale.ROOT),15,INK,true),
+                margins(-1,-2,0,0,0,3));
+        device.addView(text("Android "+Build.VERSION.RELEASE,11,MUTED,false),
+                margins(-1,-2,0,0,0,6));
+
+        String memory="";
+        try {
+            StatFs stat=new StatFs(Environment.getExternalStorageDirectory().getAbsolutePath());
+            memory=" · Свободно "+Formatter.formatShortFileSize(this,stat.getAvailableBytes());
+        } catch(Exception ignored) {}
+        int charge=-1;
+        try {
+            Intent battery=registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (battery!=null) {
+                int level=battery.getIntExtra(BatteryManager.EXTRA_LEVEL,-1);
+                int scale=battery.getIntExtra(BatteryManager.EXTRA_SCALE,-1);
+                if(level>=0 && scale>0) charge=(int)Math.round(100.0*level/scale);
+            }
+        } catch(Exception ignored) {}
+        String status=(charge>=0?"Заряд "+charge+"%":"Питание")+memory;
+        device.addView(text(status,12,INK,false));
+        device.setOnClickListener(v->openSystemPanel(Settings.ACTION_DEVICE_INFO_SETTINGS,"Об устройстве"));
+        body.addView(device,margins(-1,-2,0,0,0,8));
+
+        settingsGrid(body,"ПОДКЛЮЧЕНИЕ",
+            setting("Wi-Fi","wifi",()->openSystemPanel(Settings.ACTION_WIFI_SETTINGS,"Wi-Fi")),
+            setting("Bluetooth","bluetooth",()->openSystemPanel(Settings.ACTION_BLUETOOTH_SETTINGS,"Bluetooth")),
+            setting("Сети","globe",()->openSystemPanel(Settings.ACTION_WIRELESS_SETTINGS,"Сети")),
+            setting("Аккаунты","account",()->openSystemPanel("android.settings.SYNC_SETTINGS","Учетные записи"))
+        );
+
+        settingsGrid(body,"УСТРОЙСТВО",
+            setting("Память","storage",this::showDeviceStorage),
+            setting("Приложения","apps",()->openSystemPanel(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,"Приложения")),
+            setting("Экран","screen",()->openSystemPanel(Settings.ACTION_DISPLAY_SETTINGS,"Экран")),
+            setting("Питание","battery",()->openSystemPanel("android.settings.BATTERY_SAVER_SETTINGS","Питание")),
+            setting("Дата и время","clock",()->openSystemPanel(Settings.ACTION_DATE_SETTINGS,"Дата и время")),
+            setting("Язык","globe",()->openSystemPanel(Settings.ACTION_LOCALE_SETTINGS,"Язык")),
+            setting("Звук","notifications",()->openSystemPanel(Settings.ACTION_SOUND_SETTINGS,"Звук")),
+            setting("Клавиатура","keyboard",()->openSystemPanel(Settings.ACTION_INPUT_METHOD_SETTINGS,"Клавиатура"))
+        );
+
+        settingsGrid(body,"СИСТЕМА",
+            setting("Обновления","update",()->openSystemPanel(Settings.ACTION_SYSTEM_UPDATE_SETTINGS,"Обновления системы BOOX")),
+            setting("Интерфейс BOOX","settings",()->nativeBooxSettings("Настройки интерфейса")),
+            setting("Кнопки BOOX","buttons",()->nativeBooxSettings("Настройка кнопок")),
+            setting("Пароль","lock",()->openSystemPanel(Settings.ACTION_SECURITY_SETTINGS,"Пароль и безопасность")),
+            setting("Уведомления","notifications",()->openSystemPanel("android.settings.NOTIFICATION_SETTINGS","Уведомления")),
+            setting("Спец. возможности","access",()->openSystemPanel(Settings.ACTION_ACCESSIBILITY_SETTINGS,"Специальные возможности")),
+            setting("Безопасность","shield",()->openSystemPanel(Settings.ACTION_SECURITY_SETTINGS,"Безопасность")),
+            setting("О системе","about",()->openSystemPanel(Settings.ACTION_DEVICE_INFO_SETTINGS,"Об устройстве"))
+        );
+
+        settingsGrid(body,"НАША ОБОЛОЧКА",
+            setting("Книги семьи","book",this::renderReadingSettings),
+            setting("Библиотека","book",()->refreshBooxLibrary(true)),
+            setting("Все файлы","folder",()->showTab(1)),
+            setting("Все приложения","apps",()->showTab(2)),
+            setting("Главный экран","home",this::openHomeSettings),
+            setting("Доступ к файлам","files",this::askFilesAccess),
+            setting("Установка APK","key",this::openUnknownSources),
+            setting("Приложение Duo","about",()->appDetails(getPackageName()))
+        );
+        settingsGrid(body,"ДОПОЛНИТЕЛЬНО",
+            setting("Все настройки","settings",()->openSystemPanel(Settings.ACTION_SETTINGS,"Системные настройки")),
+            setting("Настройки BOOX","buttons",()->nativeBooxSettings("Настройки устройства")),
+            setting("Системная память","storage",()->
+                    openSystemPanel(Settings.ACTION_INTERNAL_STORAGE_SETTINGS,"Память устройства")),
+            setting("Обновить книги","update",()->refreshBooxLibrary(true))
+        );
+        body.addView(text("BOOX DUO 0.13 · Только ссылки на системные разделы, без изменения прошивки.",
+                10,MUTED,false),margins(-1,-2,0,11,0,9));
+        showPage(scroll,3);
+    }
+
+    private void renderReadingSettings() {
+        readingSettingsOpen = true;
         LinearLayout[] output = new LinearLayout[1];
         ScrollView scroll = newSection(output);
         LinearLayout body = output[0];
-        sectionHeading(body, "Настройки", "Ваша домашняя библиотека");
+        sectionHeading(body, "Книги семьи", "Параметры читалки и личные книжные полки");
+        sectionButton(body, "← Все настройки", this::renderSettingsTab);
         body.addView(text("СИСТЕМНАЯ БИБЛИОТЕКА BOOX", 13, INK, true),
                 margins(-1, -2, 0, 0, 0, 5));
         String booxStatus = booxLoading ? "Проверяю доступ…" : booxLibrary == null
@@ -1260,12 +1483,16 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.12 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.13 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
 
     @Override public void onBackPressed() {
+        if (activeTab == 3 && readingSettingsOpen) {
+            renderSettingsTab();
+            return;
+        }
         if (activeTab == 1 && (fileCategory >= 0 || currentStorageFolder != null)) {
             if (currentStorageFolder != null && !currentStorageFolder.equals(FilesCatalog.root())) {
                 currentStorageFolder = currentStorageFolder.getParentFile();
