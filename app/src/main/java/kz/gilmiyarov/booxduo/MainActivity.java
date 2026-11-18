@@ -80,6 +80,8 @@ public final class MainActivity extends Activity {
 
     private final List<AppEntry> apps = new ArrayList<>();
     private SharedPreferences prefs;
+    private BooxLibrary.Result booxLibrary;
+    private boolean booxLoading = false;
 
     private static final class AppEntry {
         final String label;
@@ -119,7 +121,78 @@ public final class MainActivity extends Activity {
                 priorFullAccess = full;
             }
             showTab(activeTab);
+            refreshBooxLibrary(false);
         }
+    }
+
+    private void refreshBooxLibrary(boolean showMessage) {
+        if (booxLoading) return;
+        booxLoading = true;
+        new Thread(() -> {
+            BooxLibrary.Result result = BooxLibrary.readAll(getContentResolver());
+            runOnUiThread(() -> {
+                booxLibrary = result;
+                booxLoading = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (showMessage) Toast.makeText(this,
+                        "Библиотека BOOX: " + result.details, Toast.LENGTH_LONG).show();
+                if (activeTab == 0 || activeTab == 3) showTab(activeTab);
+            });
+        }, "boox-library-read-only").start();
+    }
+
+    private BooxLibrary.Book linkedBooxBook(int slot) {
+        if (booxLibrary == null || !"ok".equals(booxLibrary.status)) return null;
+        BooxLibrary.Book chosen = BooxLibrary.match(booxLibrary,
+                prefs.getString("boox_link_" + slot, null));
+        if (chosen != null) return chosen;
+        // Exact filename match is only safe when one unique book has that name.
+        String filename = prefs.getString("book_name_" + slot, "");
+        if (filename.isEmpty()) return null;
+        BooxLibrary.Book found = null;
+        for (BooxLibrary.Book book : booxLibrary.books) {
+            String p = book.path.replace('\\', '/');
+            if (!filename.equalsIgnoreCase(p.substring(p.lastIndexOf('/')+1))) continue;
+            if (found != null) return null; // ambiguous; user must choose manually
+            found = book;
+        }
+        return found;
+    }
+
+    private void showBooxBookPicker(int slot) {
+        if (booxLibrary == null) {
+            Toast.makeText(this, "Проверяю библиотеку BOOX", Toast.LENGTH_SHORT).show();
+            refreshBooxLibrary(true);
+            return;
+        }
+        if (!"ok".equals(booxLibrary.status)) {
+            new AlertDialog.Builder(this).setTitle("BOOX библиотека")
+                .setMessage(booxLibrary.details + ". На этой модели интеграция может быть недоступна.")
+                .setNegativeButton("Закрыть", null)
+                .setPositiveButton("Проверить снова", (d,w) -> refreshBooxLibrary(true)).show();
+            return;
+        }
+        if (booxLibrary.books.isEmpty()) {
+            Toast.makeText(this, "BOOX не возвращает записи книг", Toast.LENGTH_LONG).show();
+            return;
+        }
+        int max = Math.min(booxLibrary.books.size(), 130);
+        CharSequence[] names = new CharSequence[max];
+        for (int i=0;i<max;i++) names[i] = booxLibrary.books.get(i).description();
+        new AlertDialog.Builder(this)
+            .setTitle("Выбери книгу из библиотеки BOOX")
+            .setItems(names, (d, index) -> {
+                BooxLibrary.Book book = booxLibrary.books.get(index);
+                prefs.edit().putString("boox_link_" + slot, book.key()).apply();
+                if (!book.name.isEmpty()) prefs.edit().putString("title_" + slot, book.name).apply();
+                showTab(activeTab);
+                Toast.makeText(this, "BOOX: книга связана. Читалка не менялась.", Toast.LENGTH_SHORT).show();
+            })
+            .setNeutralButton("Отвязать", (d,w) -> {
+                prefs.edit().remove("boox_link_" + slot).apply();
+                showTab(activeTab);
+            })
+            .setNegativeButton("Отмена", null).show();
     }
 
     private void scanApps() {
@@ -331,7 +404,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout spacer = vertical();
         body.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.4", 10, MUTED, false);
+        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.5", 10, MUTED, false);
         footer.setGravity(Gravity.CENTER);
         body.addView(footer, margins(-1, -2, 0, 23, 0, 0));
         showPage(scroll, 0);
@@ -700,6 +773,15 @@ public final class MainActivity extends Activity {
         ScrollView scroll = newSection(output);
         LinearLayout body = output[0];
         sectionHeading(body, "Настройки", "Ваша домашняя библиотека");
+        body.addView(text("СИСТЕМНАЯ БИБЛИОТЕКА BOOX", 13, INK, true),
+                margins(-1, -2, 0, 0, 0, 5));
+        String booxStatus = booxLoading ? "Проверяю доступ…" : booxLibrary == null
+                ? "Ещё не проверено" : booxLibrary.details;
+        body.addView(text(booxStatus, 12, MUTED, false),
+                margins(-1, -2, 0, 0, 0, 7));
+        sectionButton(body, "Проверить библиотеку BOOX (только чтение)", () -> refreshBooxLibrary(true));
+        body.addView(text("Если библиотека доступна, привяжи книгу Анны к её записи: тогда прогресс и последнее открытие будут обновляться при возвращении в оболочку.", 12, MUTED, false),
+                margins(-1, -2, 0, 0, 0, 8));
         for (int slot = 0; slot < 2; slot++) addSettingsForSlot(body, slot);
         body.addView(text("ФАЙЛОВЫЙ МЕНЕДЖЕР", 13, INK, true),
                 margins(-1, -2, 0, 12, 0, 6));
@@ -720,7 +802,7 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.4 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.5 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
@@ -799,11 +881,16 @@ public final class MainActivity extends Activity {
         appLabel.setEllipsize(TextUtils.TruncateAt.END);
         info.addView(appLabel, margins(-1, -2, 0, 0, 0, 4));
 
-        int current = prefs.getInt("page_" + slot, 0);
-        int total = prefs.getInt("total_" + slot, 0);
+        BooxLibrary.Book nativeBook = linkedBooxBook(slot);
+        int current = nativeBook != null && nativeBook.totalPages > 0
+                ? nativeBook.currentPage : prefs.getInt("page_" + slot, 0);
+        int total = nativeBook != null && nativeBook.totalPages > 0
+                ? nativeBook.totalPages : prefs.getInt("total_" + slot, 0);
         if (current > 0 && total >= current) {
             int percent = Math.min(100, Math.round(100f * current / total));
-            info.addView(text("Страница " + current + "/" + total + " · " + percent + "% (вручную)",
+            String source = nativeBook != null && nativeBook.totalPages > 0
+                    ? "BOOX" : "вручную";
+            info.addView(text("Страница " + current + "/" + total + " · " + percent + "% (" + source + ")",
                     11, MUTED, false), margins(-1, -2, 0, 3, 0, 4));
             LinearLayout progress = horizontal();
             progress.setBackgroundColor(WASH);
@@ -812,13 +899,23 @@ public final class MainActivity extends Activity {
             progress.addView(filled, new LinearLayout.LayoutParams(0, dp(4), percent));
             progress.addView(new View(this), new LinearLayout.LayoutParams(0, dp(4), 100-percent));
             info.addView(progress, margins(-1, 4, 0, 0, 0, 5));
+        } else if (nativeBook != null && !nativeBook.progress.isEmpty()) {
+            info.addView(text("BOOX: " + nativeBook.progress, 11, MUTED, false),
+                    margins(-1, -2, 0, 4, 0, 5));
         }
-        long lastLaunch = prefs.getLong("last_launch_" + slot, 0);
-        if (lastLaunch > 0) {
+        if (nativeBook != null && nativeBook.lastAccess > 0) {
             String when = new SimpleDateFormat("dd.MM.yyyy HH:mm", new Locale("ru", "RU"))
-                    .format(new Date(lastLaunch));
-            info.addView(text("Запуск через оболочку: " + when, 10, MUTED, false),
+                    .format(new Date(nativeBook.lastAccess));
+            info.addView(text("BOOX · Последнее открытие: " + when, 10, MUTED, false),
                     margins(-1, -2, 0, 1, 0, 5));
+        } else {
+            long lastLaunch = prefs.getLong("last_launch_" + slot, 0);
+            if (lastLaunch > 0) {
+                String when = new SimpleDateFormat("dd.MM.yyyy HH:mm", new Locale("ru", "RU"))
+                        .format(new Date(lastLaunch));
+                info.addView(text("Запуск из оболочки: " + when, 10, MUTED, false),
+                        margins(-1, -2, 0, 1, 0, 5));
+            }
         }
 
         View spacer = new View(this);
@@ -924,6 +1021,12 @@ public final class MainActivity extends Activity {
             direct.setText("Открывать закреплённую книгу сразу: " + (next ? "ДА" : "НЕТ"));
         });
         parent.addView(direct, margins(-1, 43, 0, 0, 0, 5));
+        parent.addView(simpleAction("Привязать книгу из библиотеки BOOX", () -> showBooxBookPicker(slot)),
+                margins(-1, 43, 0, 0, 0, 5));
+        BooxLibrary.Book nativeBook = linkedBooxBook(slot);
+        parent.addView(text(nativeBook != null ? "Источник прогресса: BOOX · " + nativeBook.name
+                        : "Источник прогресса: вручную / не подключён",
+                11, MUTED, false), margins(-1, -2, 0, 0, 0, 6));
         parent.addView(simpleAction("Указать страницы и прогресс вручную", () -> editProgress(slot)),
                 margins(-1, 43, 0, 0, 0, 5));
         parent.addView(simpleAction("Поставить свою обложку (картинка)", () -> pickCover(slot)),
