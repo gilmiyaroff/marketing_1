@@ -13,6 +13,9 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -371,35 +374,32 @@ public final class MainActivity extends Activity {
         return line;
     }
 
+    // Two equal E-Ink cards. Illustrations are transparent vector art, converted at
+    // build time; backgrounds and all Russian text are drawn natively by Android.
     private void renderHome() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(PAPER);
         scroll.setVerticalScrollBarEnabled(false);
+        scroll.setBackgroundColor(PAPER);
 
         LinearLayout body = vertical();
-        body.setPadding(dp(19), dp(16), dp(19), dp(22));
+        body.setPadding(dp(13), dp(12), dp(13), dp(14));
         scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
 
-        TextView eyebrow = text("ДВА ЧИТАТЕЛЯ  /  ОДНО УСТРОЙСТВО", 10, MUTED, true);
-        eyebrow.setLetterSpacing(.08f);
-        body.addView(eyebrow, margins(-1, -2, 0, 0, 0, 7));
-        body.addView(text("Наши книги", 28, INK, true), margins(-1, -2, 0, 0, 0, 4));
+        body.addView(text("НАША БИБЛИОТЕКА", 10, MUTED, true), margins(-1, -2, 0, 0, 0, 4));
+        body.addView(text("Наши книги", 25, INK, true), margins(-1, -2, 0, 0, 0, 2));
         String date = new SimpleDateFormat("EEEE, d MMMM", new Locale("ru", "RU")).format(new Date());
-        body.addView(text(date, 13, MUTED, false), margins(-1, -2, 0, 0, 0, 19));
-        body.addView(separator(), margins(-1, 1, 0, 0, 0, 17));
+        body.addView(text(date, 12, MUTED, false), margins(-1, -2, 0, 0, 0, 13));
 
-        body.addView(readerCard(0, "РУСЛАН", "Моя книга", "Р"), margins(-1, 169, 0, 0, 0, 13));
-        body.addView(readerCard(1, "АННА", "Книга Анны", "А"), margins(-1, 169, 0, 0, 0, 20));
+        // Both cards share exactly the same frame height and text coordinates.
+        body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 231, 0, 0, 0, 12));
+        body.addView(readerCard(1, "АННЫ", "", ""), margins(-1, 231, 0, 0, 0, 8));
 
-        LinearLayout spacer = vertical();
-        body.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.6", 10, MUTED, false);
-        footer.setGravity(Gravity.CENTER);
-        body.addView(footer, margins(-1, -2, 0, 23, 0, 0));
+        TextView hint = text("Удерживай карточку, чтобы выбрать приложение", 11, MUTED, false);
+        hint.setGravity(Gravity.CENTER);
+        body.addView(hint, margins(-1, -2, 0, 0, 0, 4));
         showPage(scroll, 0);
     }
-
 
     // Four independently rendered sections. The same bottom navigation persists
     // on every section, including after returning from a reader application.
@@ -849,7 +849,7 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.6 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.7 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
@@ -880,97 +880,86 @@ public final class MainActivity extends Activity {
         parent.addView(button, params);
     }
 
-    private View readerCard(int slot, String person, String defaultTitle, String monogram) {
-        LinearLayout card = horizontal();
-        card.setPadding(dp(12), dp(12), dp(12), dp(12));
-        card.setBackground(panel(PAPER, EDGE, 10));
-        card.setGravity(Gravity.CENTER_VERTICAL);
+    private View readerCard(int slot, String person, String unusedTitle, String unusedMonogram) {
+        final boolean dark = slot == 0;
+        final int foreground = dark ? Color.WHITE : INK;
+        final int background = dark ? Color.BLACK : PAPER;
+
+        FrameLayout card = new FrameLayout(this);
+        card.setBackground(panel(background, dark ? Color.rgb(94,94,94) : EDGE, 10));
+        card.setClipToOutline(true);
         card.setOnClickListener(v -> openReader(slot));
-        card.setOnLongClickListener(v -> { showSettings(); return true; });
+        card.setOnLongClickListener(v -> {
+            showAppPicker(slot, null);
+            return true;
+        });
 
-        FrameLayout cover = new FrameLayout(this);
-        cover.setBackground(panel(WASH, EDGE, 4));
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(dp(95), -1);
-        cp.rightMargin = dp(13);
-        card.addView(cover, cp);
+        ImageView art = new ImageView(this);
+        art.setImageResource(dark ? R.drawable.art_ruslan : R.drawable.art_anna);
+        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        card.addView(art, new FrameLayout.LayoutParams(-1, -1));
 
-        Uri coverUri = getCover(slot);
-        Bitmap bitmap = coverUri == null ? null : decodeCover(coverUri);
-        if (bitmap == null) {
-            File extracted = getFileStreamPath("auto_cover_" + slot + ".jpg");
-            if (extracted.exists()) bitmap = BitmapFactory.decodeFile(extracted.getAbsolutePath());
-        }
-        if (bitmap != null) {
-            ImageView image = new ImageView(this);
-            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            image.setImageBitmap(bitmap);
-            cover.addView(image, new FrameLayout.LayoutParams(-1, -1));
-        } else {
-            addMonogram(cover, monogram);
-        }
+        // Exact identical text stack on both book covers.
+        LinearLayout centered = vertical();
+        centered.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams centerParams =
+                new FrameLayout.LayoutParams(-1, dp(167), Gravity.CENTER);
+        centerParams.leftMargin = dp(8);
+        centerParams.rightMargin = dp(8);
+        card.addView(centered, centerParams);
 
-        LinearLayout info = vertical();
-        info.setGravity(Gravity.CENTER_VERTICAL);
-        card.addView(info, new LinearLayout.LayoutParams(0, -1, 1));
-        TextView label = text(person, 12, MUTED, true);
-        label.setLetterSpacing(.10f);
-        info.addView(label, margins(-1, -2, 0, 1, 0, 8));
-
-        String bookTitle = prefs.getString("title_" + slot, defaultTitle);
-        if (TextUtils.isEmpty(bookTitle)) bookTitle = defaultTitle;
-        TextView title = text(bookTitle, 19, INK, true);
-        title.setMaxLines(2);
-        title.setEllipsize(TextUtils.TruncateAt.END);
-        info.addView(title, margins(-1, -2, 0, 0, 0, 4));
-        AppEntry app = selectedApp(slot);
-        TextView appLabel = text(app != null ? app.label : "Выбрать приложение", 12, MUTED, false);
-        appLabel.setMaxLines(1);
-        appLabel.setEllipsize(TextUtils.TruncateAt.END);
-        info.addView(appLabel, margins(-1, -2, 0, 0, 0, 4));
-
-        BooxLibrary.Book nativeBook = linkedBooxBook(slot);
-        int current = nativeBook != null && nativeBook.totalPages > 0
-                ? nativeBook.currentPage : prefs.getInt("page_" + slot, 0);
-        int total = nativeBook != null && nativeBook.totalPages > 0
-                ? nativeBook.totalPages : prefs.getInt("total_" + slot, 0);
-        if (current > 0 && total >= current) {
-            int percent = Math.min(100, Math.round(100f * current / total));
-            String source = nativeBook != null && nativeBook.totalPages > 0
-                    ? "BOOX" : "вручную";
-            info.addView(text("Страница " + current + "/" + total + " · " + percent + "% (" + source + ")",
-                    11, MUTED, false), margins(-1, -2, 0, 3, 0, 4));
-            LinearLayout progress = horizontal();
-            progress.setBackgroundColor(WASH);
-            View filled = new View(this);
-            filled.setBackgroundColor(INK);
-            progress.addView(filled, new LinearLayout.LayoutParams(0, dp(4), percent));
-            progress.addView(new View(this), new LinearLayout.LayoutParams(0, dp(4), 100-percent));
-            info.addView(progress, margins(-1, 4, 0, 0, 0, 5));
-        } else if (nativeBook != null && !nativeBook.progress.isEmpty()) {
-            info.addView(text("BOOX: " + nativeBook.progress, 11, MUTED, false),
-                    margins(-1, -2, 0, 4, 0, 5));
-        }
-        if (nativeBook != null && nativeBook.lastAccess > 0) {
-            String when = new SimpleDateFormat("dd.MM.yyyy HH:mm", new Locale("ru", "RU"))
-                    .format(new Date(nativeBook.lastAccess));
-            info.addView(text("BOOX · Последнее открытие: " + when, 10, MUTED, false),
-                    margins(-1, -2, 0, 1, 0, 5));
-        } else {
-            long lastLaunch = prefs.getLong("last_launch_" + slot, 0);
-            if (lastLaunch > 0) {
-                String when = new SimpleDateFormat("dd.MM.yyyy HH:mm", new Locale("ru", "RU"))
-                        .format(new Date(lastLaunch));
-                info.addView(text("Запуск из оболочки: " + when, 10, MUTED, false),
-                        margins(-1, -2, 0, 1, 0, 5));
+        View bookIcon = new View(this) {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                float x = getWidth() / 2f, y = getHeight() / 2f;
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(2.1f));
+                paint.setColor(foreground);
+                paint.setStrokeJoin(Paint.Join.ROUND);
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                Path pages = new Path();
+                pages.moveTo(x, y - dp(12));
+                pages.cubicTo(x-dp(12),y-dp(20),x-dp(23),y-dp(18),x-dp(25),y-dp(15));
+                pages.lineTo(x-dp(25),y+dp(12));
+                pages.cubicTo(x-dp(14),y+dp(7),x-dp(6),y+dp(10),x,y+dp(16));
+                pages.cubicTo(x+dp(6),y+dp(10),x+dp(14),y+dp(7),x+dp(25),y+dp(12));
+                pages.lineTo(x+dp(25),y-dp(15));
+                pages.cubicTo(x+dp(23),y-dp(18),x+dp(12),y-dp(20),x,y-dp(12));
+                pages.close();
+                canvas.drawPath(pages, paint);
+                canvas.drawLine(x,y-dp(12),x,y+dp(16),paint);
             }
-        }
+        };
+        centered.addView(bookIcon, margins(-1, 44, 0, 0, 0, 5));
 
-        View spacer = new View(this);
-        info.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
-        info.addView(separator(), margins(-1, 1, 0, 3, 0, 9));
-        TextView launch = text(app != null ? "ОТКРЫТЬ ЧИТАЛКУ   →" : "НАСТРОИТЬ   →", 11, INK, true);
-        launch.setLetterSpacing(.02f);
-        info.addView(launch, margins(-1, -2, 0, 0, 0, 1));
+        TextView line1 = text("К Н И Г И", 17, foreground, false);
+        line1.setGravity(Gravity.CENTER);
+        centered.addView(line1, margins(-1, -2, 0, 0, 0, 0));
+
+        TextView line2 = text(person, 31, foreground, true);
+        line2.setGravity(Gravity.CENTER);
+        line2.setLetterSpacing(.10f);
+        line2.setSingleLine(true);
+        line2.setEllipsize(TextUtils.TruncateAt.END);
+        centered.addView(line2, margins(-1, -2, 0, 0, 0, 9));
+
+        View rule = new View(this);
+        rule.setBackgroundColor(foreground);
+        LinearLayout.LayoutParams ruleParams = margins(48, 2, 0, 0, 0, 0);
+        ruleParams.gravity = Gravity.CENTER_HORIZONTAL;
+        centered.addView(rule, ruleParams);
+
+        AppEntry app = selectedApp(slot);
+        TextView action = text(app == null ? "ВЫБРАТЬ ПРИЛОЖЕНИЕ" : "ОТКРЫТЬ КНИГИ", 11, foreground, true);
+        action.setLetterSpacing(.06f);
+        action.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams bottom =
+                new FrameLayout.LayoutParams(-1, dp(29), Gravity.BOTTOM);
+        bottom.bottomMargin = dp(8);
+        bottom.leftMargin = dp(8);
+        bottom.rightMargin = dp(8);
+        card.addView(action, bottom);
         return card;
     }
 
