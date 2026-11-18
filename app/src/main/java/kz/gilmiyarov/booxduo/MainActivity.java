@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.provider.DocumentsContract;
 import android.os.Environment;
 import android.os.StatFs;
+import android.util.LruCache;
 import android.text.format.Formatter;
 import android.content.ContentResolver;
 import android.provider.OpenableColumns;
@@ -38,6 +39,7 @@ import android.view.WindowManager;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -50,6 +52,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -85,6 +93,16 @@ public final class MainActivity extends Activity {
     private SharedPreferences prefs;
     private BooxLibrary.Result booxLibrary;
     private boolean booxLoading = false;
+    private int allBooksScrollX = 0;
+    private int allBooksVerticalScrollY = 0;
+    private final ExecutorService thumbnailWorker = Executors.newSingleThreadExecutor();
+    private final Set<String> coverAttempted = new HashSet<>();
+    private final LruCache<String, Bitmap> thumbnailCache =
+            new LruCache<String, Bitmap>(10 * 1024 * 1024) {
+                @Override protected int sizeOf(String key, Bitmap bitmap) {
+                    return bitmap.getByteCount();
+                }
+            };
     private int pendingBookPicker = -1;
 
     private static final class AppEntry {
@@ -425,7 +443,226 @@ public final class MainActivity extends Activity {
         TextView hint = text("«Сменить» выбирает текущую книгу · удержание карточки тоже", 11, MUTED, false);
         hint.setGravity(Gravity.CENTER);
         body.addView(hint, margins(-1, -2, 0, 0, 0, 4));
+
+        addAllBooksCarousel(body);
+        scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> allBooksVerticalScrollY = y);
+        scroll.post(() -> scroll.scrollTo(0, allBooksVerticalScrollY));
         showPage(scroll, 0);
+    }
+
+    // Horizontal, continuously swipeable shelf of all titles exposed by BOOX.
+    // The first version intentionally avoids third-party libraries and animations.
+    private void addAllBooksCarousel(LinearLayout body) {
+        body.addView(separator(), margins(-1, 1, 0, 15, 0, 15));
+        LinearLayout heading = horizontal();
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("ВСЕ КНИГИ", 14, INK, true);
+        heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+
+        if (booxLibrary != null && "ok".equals(booxLibrary.status)) {
+            TextView total = text(booxLibrary.books.size() + "  ·  ЛИСТАЙ →", 10, MUTED, false);
+            heading.addView(total);
+        } else {
+            TextView loading = text(booxLoading ? "ЗАГРУЗКА" : "ОБНОВИТЬ", 10, MUTED, true);
+            loading.setPadding(dp(8), dp(7), 0, dp(7));
+            loading.setOnClickListener(v -> refreshBooxLibrary(true));
+            heading.addView(loading);
+        }
+        body.addView(heading, margins(-1, -2, 0, 0, 0, 9));
+
+        if (booxLibrary == null || !"ok".equals(booxLibrary.status)) {
+            String message = booxLibrary == null || booxLoading
+                    ? "Загружаю библиотеку BOOX…"
+                    : "Библиотека недоступна на этой прошивке";
+            TextView status = text(message, 12, MUTED, false);
+            status.setPadding(dp(12), dp(17), dp(12), dp(17));
+            status.setBackground(panel(WASH, EDGE, 6));
+            body.addView(status, margins(-1, -2, 0, 0, 0, 7));
+            return;
+        }
+        // Deduplicate identical local paths, but preserve distinct books that
+        // merely happen to share a title.
+        Map<String, BooxLibrary.Book> unique = new LinkedHashMap<>();
+        for (BooxLibrary.Book item : booxLibrary.books) {
+            String raw = item.path == null ? "" : item.path.trim();
+            String identity = raw.isEmpty() ? item.key() : "path:" + raw.toLowerCase(Locale.ROOT);
+            if (!unique.containsKey(identity)) unique.put(identity, item);
+        }
+        if (unique.isEmpty()) {
+            body.addView(text("Пока нет книг в системной библиотеке", 13, MUTED, false));
+            return;
+        }
+
+        HorizontalScrollView horizontal = new HorizontalScrollView(this);
+        horizontal.setFillViewport(false);
+        horizontal.setHorizontalScrollBarEnabled(false);
+        horizontal.setSmoothScrollingEnabled(false);
+        horizontal.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout strip = horizontal();
+        strip.setGravity(Gravity.TOP);
+        strip.setPadding(0, dp(2), dp(8), dp(6));
+        horizontal.addView(strip, new HorizontalScrollView.LayoutParams(-2, -2));
+
+        ArrayList<CarouselThumbnail> thumbs = new ArrayList<>();
+        for (BooxLibrary.Book item : unique.values()) {
+            LinearLayout tile = vertical();
+            tile.setPadding(dp(7), dp(7), dp(7), dp(6));
+            tile.setBackground(panel(PAPER, EDGE, 6));
+            LinearLayout.LayoutParams tileLayout = margins(130, 188, 0, 0, 9, 0);
+            strip.addView(tile, tileLayout);
+
+            FrameLayout preview = new FrameLayout(this);
+            preview.setBackground(panel(WASH, EDGE, 4));
+            preview.setClipToOutline(true);
+            tile.addView(preview, margins(-1, 112, 0, 0, 0, 7));
+
+            TextView fallback = text(bookLabel(item.name), 12, INK, true);
+            fallback.setGravity(Gravity.CENTER);
+            fallback.setPadding(dp(8), dp(8), dp(8), dp(8));
+            fallback.setMaxLines(4);
+            fallback.setEllipsize(TextUtils.TruncateAt.END);
+            preview.addView(fallback, new FrameLayout.LayoutParams(-1, -1));
+
+            ImageView thumbnail = new ImageView(this);
+            thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumbnail.setVisibility(View.GONE);
+            preview.addView(thumbnail, new FrameLayout.LayoutParams(-1, -1));
+
+            TextView name = text(item.name.isEmpty() ? bookLabel(item.path) : item.name,
+                    11, INK, true);
+            name.setMaxLines(2);
+            name.setEllipsize(TextUtils.TruncateAt.END);
+            tile.addView(name, margins(-1, -2, 0, 0, 0, 3));
+
+            if (item.hasUsableProgress()) {
+                TextView progress = text(item.percent() + "%", 10, MUTED, false);
+                tile.addView(progress);
+            } else if (item.lastAccess > 0) {
+                String recent = new SimpleDateFormat("dd.MM.yy", Locale.getDefault())
+                        .format(new Date(item.lastAccess));
+                tile.addView(text(recent, 10, MUTED, false));
+            }
+            tile.setOnClickListener(v -> showBookCarouselActions(item));
+            thumbs.add(new CarouselThumbnail(item, thumbnail, fallback));
+        }
+
+        horizontal.setOnScrollChangeListener((v,x,y,oldX,oldY)->{
+            allBooksScrollX = x;
+            loadVisibleThumbnails(thumbs, x, horizontal.getWidth());
+        });
+        body.addView(horizontal, margins(-1, -2, 0, 0, 0, 6));
+        horizontal.post(()->{
+            horizontal.scrollTo(allBooksScrollX, 0);
+            loadVisibleThumbnails(thumbs, allBooksScrollX, horizontal.getWidth());
+        });
+        TextView note = text("Книги из библиотеки BOOX. Обложки загружаются, если файл доступен.",
+                10, MUTED, false);
+        body.addView(note, margins(-1, -2, 0, 0, 0, 3));
+    }
+
+    private static final class CarouselThumbnail {
+        final BooxLibrary.Book book;
+        final ImageView image;
+        final TextView fallback;
+        CarouselThumbnail(BooxLibrary.Book book, ImageView image, TextView fallback) {
+            this.book = book;
+            this.image = image;
+            this.fallback = fallback;
+        }
+    }
+
+    private String bookLabel(String input) {
+        if (input == null || input.trim().isEmpty()) return "КНИГА";
+        String s = input.replace('\\','/');
+        s = s.substring(s.lastIndexOf('/') + 1);
+        s = s.replaceFirst("(?i)\\.(epub|fb2|fb2\\.zip|pdf|mobi|azw3|txt|djvu)$", "");
+        return s.trim().isEmpty() ? "КНИГА" : s;
+    }
+
+    private void loadVisibleThumbnails(List<CarouselThumbnail> thumbs, int position, int viewportWidth) {
+        int width = dp(139);
+        int start = Math.max(0, position / width - 1);
+        int last = Math.min(thumbs.size(), (position + Math.max(viewportWidth, dp(300))) / width + 3);
+        for (int i = start; i < last; i++) {
+            CarouselThumbnail entry = thumbs.get(i);
+            if (entry.book.path == null || entry.book.path.trim().isEmpty()) continue;
+            String cacheKey = entry.book.path;
+            Bitmap cached = thumbnailCache.get(cacheKey);
+            if (cached != null) {
+                entry.image.setImageBitmap(cached);
+                entry.image.setVisibility(View.VISIBLE);
+                entry.fallback.setVisibility(View.GONE);
+                continue;
+            }
+            if (!coverAttempted.add(cacheKey)) continue;
+            thumbnailWorker.execute(() -> {
+                Bitmap cover = null;
+                try {
+                    File file = new File(cacheKey);
+                    if (file.isFile() && file.canRead()) {
+                        cover = BookPreview.extract(getApplicationContext(),
+                                SharedFileProvider.uriFor(file), file.getName());
+                    }
+                } catch (Exception ignored) { }
+                if (cover != null) {
+                    Bitmap scaled = Bitmap.createScaledBitmap(cover, 220, 310, true);
+                    if (scaled != cover) cover.recycle();
+                    Bitmap result = scaled;
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        thumbnailCache.put(cacheKey, result);
+                        entry.image.setImageBitmap(result);
+                        entry.image.setVisibility(View.VISIBLE);
+                        entry.fallback.setVisibility(View.GONE);
+                    });
+                }
+            });
+        }
+    }
+
+    private void showBookCarouselActions(BooxLibrary.Book book) {
+        String details = book.name;
+        if (book.hasUsableProgress()) {
+            details += "\\nПрочитано: " + book.percent() + "%";
+        }
+        if (book.lastAccess > 0) {
+            details += "\\nПоследнее открытие: "
+                    + new SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
+                    .format(new Date(book.lastAccess));
+        }
+        String[] options = {"Открыть файл книги", "На карточку Руслана", "На карточку Анны"};
+        new AlertDialog.Builder(this)
+            .setTitle("Книга из библиотеки")
+            .setMessage(details)
+            .setItems(options, (dialog, which) -> {
+                if (which == 0) openCarouselBook(book);
+                else {
+                    int slot = which - 1;
+                    prefs.edit().putString("boox_link_" + slot, book.key())
+                        .putString("title_" + slot, book.name).apply();
+                    Toast.makeText(this,
+                            "Карточка обновлена. Читалка по-прежнему открывает свой последний документ.",
+                            Toast.LENGTH_LONG).show();
+                    showTab(0);
+                }
+            })
+            .setNegativeButton("Закрыть", null)
+            .show();
+    }
+
+    private void openCarouselBook(BooxLibrary.Book book) {
+        if (book.path == null || book.path.trim().isEmpty()) {
+            Toast.makeText(this, "BOOX не передал расположение этого файла",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        File path = new File(book.path);
+        if (!path.isFile() || !path.canRead()) {
+            Toast.makeText(this, "Доступ к файлу ограничен. Открой его в библиотеке BOOX.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        openDocument(SharedFileProvider.uriFor(path), FilesCatalog.mime(path));
     }
 
     // Four independently rendered sections. The same bottom navigation persists
