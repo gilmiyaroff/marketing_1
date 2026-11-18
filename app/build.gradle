@@ -10,8 +10,8 @@ android {
         applicationId 'kz.gilmiyarov.booxduo'
         minSdk 26
         targetSdk 32
-        versionCode 8
-        versionName '0.8.0'
+        versionCode 9
+        versionName '0.9.0'
     }
 
     // Use exactly the keystore cached by CI, rather than an SDK-dependent
