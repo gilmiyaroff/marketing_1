@@ -580,9 +580,9 @@ public final class MainActivity extends Activity {
         body.addView(text(date, 12, MUTED, false), margins(-1, -2, 0, 0, 0, 13));
 
         // The three cards share the same section-cover and metadata layout.
-        body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 182, 0, 0, 0, 9));
-        body.addView(readerCard(1, "АННЫ", "", ""), margins(-1, 182, 0, 0, 0, 9));
-        body.addView(readerCard(2, "АМЕЛИИ", "", ""), margins(-1, 182, 0, 0, 0, 8));
+        body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 202, 0, 0, 0, 9));
+        body.addView(readerCard(1, "АННЫ", "", ""), margins(-1, 202, 0, 0, 0, 9));
+        body.addView(readerCard(2, "АМЕЛИИ", "", ""), margins(-1, 202, 0, 0, 0, 8));
 
         TextView hint = text("«Сменить» выбирает текущую книгу · удержание карточки тоже", 11, MUTED, false);
         hint.setGravity(Gravity.CENTER);
@@ -1260,7 +1260,7 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.11 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.12 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
@@ -1299,7 +1299,15 @@ public final class MainActivity extends Activity {
         card.setPadding(dp(9), dp(9), dp(9), dp(9));
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setBackground(panel(PAPER, EDGE, 9));
-        card.setOnClickListener(v -> openReader(slot));
+        // Entire card is a large reading target; only the bottom-right action
+        // intercepts taps to change the currently assigned book.
+        card.setOnClickListener(v -> {
+            if (linkedBooxBook(slot) == null && savedBook(slot) == null) {
+                showBooxBookPicker(slot);
+            } else {
+                openReader(slot);
+            }
+        });
         card.setOnLongClickListener(v -> { showBooxBookPicker(slot); return true; });
 
         // The left side is a permanent *personal library cover*, NOT the
@@ -1344,9 +1352,13 @@ public final class MainActivity extends Activity {
 
         // The right side contains dynamic book metadata from a saved unique
         // BOOX library link, or user-pinned book. No ownership guessing.
+        // Bottom action is pinned independently of metadata height. The prior
+        // vertical stack pushed the controls outside the card for long titles.
+        FrameLayout infoFrame = new FrameLayout(this);
+        card.addView(infoFrame, new LinearLayout.LayoutParams(0, -1, 1));
         LinearLayout info = vertical();
-        info.setPadding(0, dp(4), 0, dp(3));
-        card.addView(info, new LinearLayout.LayoutParams(0, -1, 1));
+        info.setPadding(0, dp(3), 0, dp(40));
+        infoFrame.addView(info, new FrameLayout.LayoutParams(-1, -1));
 
         TextView header = text("СЕЙЧАС ЧИТАЕТ", 10, MUTED, true);
         header.setLetterSpacing(.07f);
@@ -1410,21 +1422,22 @@ public final class MainActivity extends Activity {
             info.addView(lastLabel, margins(-1, -2, 0, 1, 0, 3));
         }
 
-        info.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        info.addView(separator(), margins(-1, 1, 0, 0, 0, 5));
+        // One consistent action per slot, pinned to the bottom RIGHT.
+        // No redundant "ЧИТАТЬ" label: tapping anywhere on the card reads.
+        View separatorLine = separator();
+        FrameLayout.LayoutParams separatorPos =
+                new FrameLayout.LayoutParams(-1, dp(1), Gravity.BOTTOM);
+        separatorPos.bottomMargin = dp(37);
+        infoFrame.addView(separatorLine, separatorPos);
 
-        LinearLayout actions = horizontal();
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        TextView read = text(reader != null ? "ЧИТАТЬ →" : "ВЫБРАТЬ ЧИТАЛКУ", 11, INK, true);
-        actions.addView(read, new LinearLayout.LayoutParams(0, -2, 1));
-
-        TextView change = text(book == null ? "ВЫБРАТЬ КНИГУ" : "СМЕНИТЬ", 10, INK, true);
-        change.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        change.setPadding(dp(4), dp(8), 0, dp(8));
+        boolean bookSelected = book != null || savedBook(slot) != null;
+        TextView change = text(bookSelected ? "СМЕНИТЬ" : "ВЫБРАТЬ КНИГУ", 11, INK, true);
+        change.setGravity(Gravity.CENTER);
+        change.setPadding(dp(9), 0, dp(4), 0);
         change.setOnClickListener(v -> showBooxBookPicker(slot));
-        actions.addView(change, new LinearLayout.LayoutParams(-2, -2));
-
-        info.addView(actions, margins(-1, -2, 0, 0, 0, 0));
+        FrameLayout.LayoutParams actionPos =
+                new FrameLayout.LayoutParams(-2, dp(36), Gravity.RIGHT | Gravity.BOTTOM);
+        infoFrame.addView(change, actionPos);
         return card;
     }
 
