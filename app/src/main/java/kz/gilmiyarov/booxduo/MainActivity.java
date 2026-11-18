@@ -62,6 +62,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.Collections;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -95,6 +96,11 @@ public final class MainActivity extends Activity {
 
     private final List<AppEntry> apps = new ArrayList<>();
     private SharedPreferences prefs;
+    private ReadingStats readingStats;
+    private int statsPerson = 0;
+    private int statsMonthShift = 0;
+    private boolean statsConfirmOpen = false;
+    private static final String[] READERS = {"Руслан", "Анна", "Амелия"};
     private BooxLibrary.Result booxLibrary;
     private boolean booxLoading = false;
     private int allBooksScrollX = 0;
@@ -122,6 +128,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences("duo", Context.MODE_PRIVATE);
+        readingStats = new ReadingStats(this);
         getWindow().setStatusBarColor(PAPER);
         getWindow().setNavigationBarColor(PAPER);
         getWindow().getDecorView().setSystemUiVisibility(
@@ -590,10 +597,8 @@ public final class MainActivity extends Activity {
         body.setPadding(dp(12), dp(8), dp(12), dp(12));
         scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
 
-        body.addView(text("НАША БИБЛИОТЕКА", 10, MUTED, true), margins(-1, -2, 0, 0, 0, 2));
-        body.addView(text("Наши книги", 23, INK, true), margins(-1, -2, 0, 0, 0, 1));
-        String date = new SimpleDateFormat("EEEE, d MMMM", new Locale("ru", "RU")).format(new Date());
-        body.addView(text(date, 11, MUTED, false), margins(-1, -2, 0, 0, 0, 8));
+        String date = new SimpleDateFormat("EEEE, d MMMM · HH:mm", new Locale("ru", "RU")).format(new Date());
+        body.addView(text(date, 14, INK, true), margins(-1, -2, 0, 0, 0, 9));
 
         // The three cards share the same section-cover and metadata layout.
         body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 136, 0, 0, 0, 7));
@@ -824,6 +829,7 @@ public final class MainActivity extends Activity {
         if (tab == 0) renderHome();
         else if (tab == 1) renderFileTab();
         else if (tab == 2) renderAppTab();
+        else if (tab == 3) renderStatsTab();
         else renderSettingsTab();
     }
 
@@ -835,10 +841,10 @@ public final class MainActivity extends Activity {
         root.addView(separator(), margins(-1, 1, 0, 0, 0, 0));
         LinearLayout navigation = horizontal();
         navigation.setPadding(dp(3), dp(3), dp(3), dp(3));
-        String[] labels = {"Книги", "Файлы", "Приложения", "Настройки"};
+        String[] labels = {"Книги", "Файлы", "Приложения", "Статистика", "Настройки"};
         int[] icons = { android.R.drawable.ic_menu_agenda,
                 android.R.drawable.ic_menu_save, android.R.drawable.ic_menu_sort_by_size,
-                android.R.drawable.ic_menu_preferences };
+                android.R.drawable.ic_menu_recent_history, android.R.drawable.ic_menu_preferences };
         for (int i = 0; i < 4; i++) {
             final int chosen = i;
             LinearLayout item = vertical();
@@ -847,8 +853,8 @@ public final class MainActivity extends Activity {
             ImageView img = new ImageView(this);
             img.setImageResource(icons[i]);
             img.setColorFilter(tab == i ? INK : MUTED);
-            item.addView(img, margins(22, 22, 0, 0, 0, 3));
-            TextView label = text(labels[i], 10, tab == i ? INK : MUTED, tab == i);
+            item.addView(img, margins(20, 20, 0, 0, 0, 3));
+            TextView label = text(labels[i], 9, tab == i ? INK : MUTED, tab == i);
             label.setGravity(Gravity.CENTER);
             item.addView(label, margins(-1, -2, 0, 0, 0, 0));
             item.setOnClickListener(v -> { if (activeTab != chosen) showTab(chosen); });
