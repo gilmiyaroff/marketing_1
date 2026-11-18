@@ -67,10 +67,11 @@ jobs:
           mkdir -p app/src/main/res/drawable-nodpi
           python - <<'PY'
           import cairosvg
-          for name in ("ruslan", "anna"):
+          for name in ("ruslan", "anna", "amelia"):
               src = {
                   "ruslan": "artwork/ruslan_space_ink.svg",
                   "anna": "artwork/anna_blossom_ink.svg",
+                  "amelia": "artwork/amelia_story_ink.svg",
               }[name]
               out = f"app/src/main/res/drawable-nodpi/art_{name}.png"
               cairosvg.svg2png(url=src, write_to=out, output_width=1000, output_height=480)
