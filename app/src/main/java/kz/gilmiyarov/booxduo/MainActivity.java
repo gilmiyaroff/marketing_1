@@ -623,10 +623,10 @@ public final class MainActivity extends Activity {
     private void showBookCarouselActions(BooxLibrary.Book book) {
         String details = book.name;
         if (book.hasUsableProgress()) {
-            details += "\\nПрочитано: " + book.percent() + "%";
+            details += "\nПрочитано: " + book.percent() + "%";
         }
         if (book.lastAccess > 0) {
-            details += "\\nПоследнее открытие: "
+            details += "\nПоследнее открытие: "
                     + new SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
                     .format(new Date(book.lastAccess));
         }
