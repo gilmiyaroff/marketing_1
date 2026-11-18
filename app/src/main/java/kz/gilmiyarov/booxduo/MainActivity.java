@@ -1407,7 +1407,7 @@ public final class MainActivity extends Activity {
         );
 
         settingsGrid(body,"СИСТЕМА",
-            setting("Обновления","update",()->openSystemPanel(Settings.ACTION_SYSTEM_UPDATE_SETTINGS,"Обновления системы BOOX")),
+            setting("Обновления","update",()->openSystemPanel("android.settings.SYSTEM_UPDATE_SETTINGS","Обновления системы BOOX")),
             setting("Интерфейс BOOX","settings",()->nativeBooxSettings("Настройки интерфейса")),
             setting("Кнопки BOOX","buttons",()->nativeBooxSettings("Настройка кнопок")),
             setting("Пароль","lock",()->openSystemPanel(Settings.ACTION_SECURITY_SETTINGS,"Пароль и безопасность")),
