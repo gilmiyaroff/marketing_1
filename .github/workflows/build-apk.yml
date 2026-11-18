@@ -56,11 +56,19 @@ jobs:
           fi
 
       - name: Build installable debug APK
-        run: gradle --no-daemon :app:assembleDebug
+        run: gradle --no-daemon :app:assembleDebug :uninstaller:assembleDebug
       - name: Publish APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: BooxDuo-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish optional uninstall helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: BooxDuo-uninstall-helper
+          path: uninstaller/build/outputs/apk/debug/uninstaller-debug.apk
           if-no-files-found: error
           retention-days: 30
