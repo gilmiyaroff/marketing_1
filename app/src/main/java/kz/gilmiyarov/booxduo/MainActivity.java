@@ -5,6 +5,8 @@ import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.ClipData;
+import android.database.Cursor;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -17,6 +19,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.text.TextUtils;
@@ -35,6 +38,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.InputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -56,6 +61,8 @@ public final class MainActivity extends Activity {
     private static final int PAPER = Color.WHITE;
     private static final int WASH = Color.rgb(246, 246, 245);
     private static final int PICK_COVER_BASE = 410;
+    private static final int PICK_BOOK_BASE = 420;
+    private static final int PICK_FILE_FROM_STORAGE = 430;
 
     private final List<AppEntry> apps = new ArrayList<>();
     private SharedPreferences prefs;
@@ -79,6 +86,7 @@ public final class MainActivity extends Activity {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         scanApps();
         autoPickReaders();
+        autoPickFileManager();
         renderHome();
     }
 
@@ -88,6 +96,7 @@ public final class MainActivity extends Activity {
         if (prefs != null) {
             scanApps();
             autoPickReaders();
+            autoPickFileManager();
             renderHome();
         }
     }
@@ -129,6 +138,20 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void autoPickFileManager() {
+        if (prefs.contains("target_2")) return;
+        for (AppEntry entry : apps) {
+            String label = entry.label.toLowerCase(Locale.ROOT);
+            if (label.equals("файлы") || label.equals("files")
+                    || label.contains("файловый менеджер") || label.contains("file manager")
+                    || label.contains("внутренняя память") || label.equals("storage")
+                    || label.equals("проводник")) {
+                saveTarget(2, entry);
+                return;
+            }
+        }
+    }
+
     private void saveTarget(int slot, AppEntry app) {
         prefs.edit().putString("target_" + slot, app.component.flattenToString()).apply();
     }
@@ -149,7 +172,8 @@ public final class MainActivity extends Activity {
             Intent intent = new Intent(Intent.ACTION_MAIN);
             intent.addCategory(Intent.CATEGORY_LAUNCHER);
             intent.setComponent(entry.component);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            // Do not RESET_TASK_IF_NEEDED: this can return a resumed reader to its library.
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
         } catch (ActivityNotFoundException | SecurityException e) {
             Toast.makeText(this, "Не удалось открыть приложение. Выбери его заново в настройках.", Toast.LENGTH_LONG).show();
@@ -162,7 +186,55 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "Сначала выбери читалку", Toast.LENGTH_SHORT).show();
             showAppPicker(slot, null);
         } else {
-            launchApp(selected);
+            Uri book = savedBook(slot);
+            if (book != null && prefs.getBoolean("direct_" + slot, false)) {
+                launchPinnedBook(slot, selected, book);
+            } else {
+                launchApp(selected);
+            }
+        }
+    }
+
+    private Uri savedBook(int slot) {
+        String saved = prefs.getString("book_" + slot, null);
+        try { return saved == null ? null : Uri.parse(saved); }
+        catch (Exception e) { return null; }
+    }
+
+    private void launchPinnedBook(int slot, AppEntry app, Uri uri) {
+        try {
+            Intent view = new Intent(Intent.ACTION_VIEW);
+            view.setDataAndType(uri, getBookMime(prefs.getString("book_name_" + slot, "")));
+            view.setPackage(app.component.getPackageName());
+            view.setClipData(ClipData.newUri(getContentResolver(), "book", uri));
+            view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(view);
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Toast.makeText(this, "Читалка не открыла выбранный файл — запускаю её обычным способом", Toast.LENGTH_LONG).show();
+            launchApp(app);
+        }
+    }
+
+    private String getBookMime(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        if (n.endsWith(".epub")) return "application/epub+zip";
+        if (n.endsWith(".pdf")) return "application/pdf";
+        if (n.endsWith(".fb2") || n.endsWith(".fb2.zip")) return "application/x-fictionbook+xml";
+        if (n.endsWith(".txt")) return "text/plain";
+        return "application/octet-stream";
+    }
+
+    private void openFiles() {
+        AppEntry manager = selectedApp(2);
+        if (manager != null) { launchApp(manager); return; }
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        picker.addCategory(Intent.CATEGORY_OPENABLE);
+        picker.setType("*/*");
+        try {
+            startActivityForResult(picker, PICK_FILE_FROM_STORAGE);
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Toast.makeText(this, "Выбери файловый менеджер в настройках книг", Toast.LENGTH_LONG).show();
+            showAppPicker(2, null);
         }
     }
 
@@ -231,12 +303,13 @@ public final class MainActivity extends Activity {
 
         LinearLayout shortcuts = horizontal();
         body.addView(shortcuts, margins(-1, 45, 0, 0, 0, 0));
-        addShortcut(shortcuts, "Все приложения", () -> showAppPicker(-1, null), true);
-        addShortcut(shortcuts, "Настройки книг", this::showSettings, false);
+        addShortcut(shortcuts, "Файлы", this::openFiles, true);
+        addShortcut(shortcuts, "Приложения", () -> showAppPicker(-1, null), true);
+        addShortcut(shortcuts, "Настройки", this::showSettings, false);
 
         LinearLayout spacer = vertical();
         body.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.1", 10, MUTED, false);
+        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.2", 10, MUTED, false);
         footer.setGravity(Gravity.CENTER);
         body.addView(footer, margins(-1, -2, 0, 23, 0, 0));
         setContentView(scroll);
@@ -248,7 +321,7 @@ public final class MainActivity extends Activity {
         button.setBackground(panel(WASH, EDGE, 8));
         button.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
-        if (first) params.rightMargin = dp(10);
+        if (first) params.rightMargin = dp(7);
         parent.addView(button, params);
     }
 
@@ -267,16 +340,16 @@ public final class MainActivity extends Activity {
         card.addView(cover, cp);
 
         Uri coverUri = getCover(slot);
-        if (coverUri != null) {
+        Bitmap bitmap = coverUri == null ? null : decodeCover(coverUri);
+        if (bitmap == null) {
+            File extracted = getFileStreamPath("auto_cover_" + slot + ".jpg");
+            if (extracted.exists()) bitmap = BitmapFactory.decodeFile(extracted.getAbsolutePath());
+        }
+        if (bitmap != null) {
             ImageView image = new ImageView(this);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            Bitmap bitmap = decodeCover(coverUri);
-            if (bitmap != null) {
-                image.setImageBitmap(bitmap);
-                cover.addView(image, new FrameLayout.LayoutParams(-1, -1));
-            } else {
-                addMonogram(cover, monogram);
-            }
+            image.setImageBitmap(bitmap);
+            cover.addView(image, new FrameLayout.LayoutParams(-1, -1));
         } else {
             addMonogram(cover, monogram);
         }
@@ -342,9 +415,15 @@ public final class MainActivity extends Activity {
         LinearLayout content = vertical();
         content.setPadding(dp(18), dp(8), dp(18), dp(8));
         scroll.addView(content);
-        content.addView(text("Редактируй названия и обложки. Приложения не теряют свою историю чтения.", 13, MUTED, false),
+        content.addView(text("Названия и обложки можно настроить вручную или выбрать сам файл книги для извлечения обложки.", 13, MUTED, false),
                 margins(-1, -2, 0, 0, 0, 12));
         for (int slot = 0; slot < 2; slot++) addSettingsForSlot(content, slot);
+        AppEntry manager = selectedApp(2);
+        content.addView(text("ФАЙЛОВЫЙ МЕНЕДЖЕР", 14, INK, true), margins(-1, -2, 0, 14, 0, 5));
+        content.addView(text(manager == null ? "Не найден — откроется системный выбор файла" : manager.label, 12, MUTED, false),
+                margins(-1, -2, 0, 0, 0, 7));
+        content.addView(simpleAction("Выбрать приложение для кнопки «Файлы»", () -> showAppPicker(2, null)),
+                margins(-1, 43, 0, 0, 0, 7));
         content.addView(simpleAction("Выбрать домашний экран Android", this::openHomeSettings),
                 margins(-1, 47, 0, 14, 0, 4));
         content.addView(text("Если BOOX не разрешит заменить главный экран, запускай «Наши книги» из списка приложений. Это безопасно и без root.",
@@ -385,10 +464,23 @@ public final class MainActivity extends Activity {
             AppEntry picked = selectedApp(slot);
             currentApp.setText("Приложение: " + (picked == null ? "не выбрано" : picked.label));
         })), margins(-1, 43, 0, 0, 0, 5));
-        parent.addView(simpleAction("Поставить обложку из файлов", () -> pickCover(slot)),
+        parent.addView(simpleAction("Закрепить файл книги (EPUB, FB2, PDF)", () -> pickBook(slot)),
+                margins(-1, 43, 0, 0, 0, 5));
+        TextView direct = text("Открывать закреплённую книгу сразу: "
+                + (prefs.getBoolean("direct_" + slot, false) ? "ДА" : "НЕТ"), 13, INK, false);
+        direct.setGravity(Gravity.CENTER);
+        direct.setBackground(panel(WASH, EDGE, 7));
+        direct.setOnClickListener(v -> {
+            boolean next = !prefs.getBoolean("direct_" + slot, false);
+            prefs.edit().putBoolean("direct_" + slot, next).apply();
+            direct.setText("Открывать закреплённую книгу сразу: " + (next ? "ДА" : "НЕТ"));
+        });
+        parent.addView(direct, margins(-1, 43, 0, 0, 0, 5));
+        parent.addView(simpleAction("Поставить свою обложку (картинка)", () -> pickCover(slot)),
                 margins(-1, 43, 0, 0, 0, 5));
         parent.addView(simpleAction("Убрать обложку", () -> {
             prefs.edit().remove("cover_" + slot).apply();
+            getFileStreamPath("auto_cover_" + slot + ".jpg").delete();
             Toast.makeText(this, "Обложка удалена", Toast.LENGTH_SHORT).show();
         }), margins(-1, 43, 0, 0, 0, 4));
         parent.addView(separator(), margins(-1, 1, 0, 13, 0, 0));
@@ -418,7 +510,7 @@ public final class MainActivity extends Activity {
         list.setAdapter(adapter);
         content.addView(list, new LinearLayout.LayoutParams(-1, dp(360)));
         AlertDialog picker = new AlertDialog.Builder(this)
-                .setTitle(slot < 0 ? "Открыть приложение" : "Выбери свою читалку")
+                .setTitle(slot < 0 ? "Открыть приложение" : slot == 2 ? "Файловый менеджер" : "Выбери свою читалку")
                 .setView(content)
                 .setNegativeButton("Отмена", null)
                 .create();
@@ -452,6 +544,61 @@ public final class MainActivity extends Activity {
         picker.show();
     }
 
+    private void pickBook(int slot) {
+        Intent select = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        select.addCategory(Intent.CATEGORY_OPENABLE);
+        select.setType("*/*");
+        select.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try { startActivityForResult(select, PICK_BOOK_BASE + slot); }
+        catch (ActivityNotFoundException | SecurityException e) {
+            Toast.makeText(this, "Не удалось открыть выбор книги", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String selectedFilename(Uri uri) {
+        try (Cursor cursor = getContentResolver().query(uri,
+                new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
+        } catch (Exception ignored) { }
+        return uri.getLastPathSegment() == null ? "Книга" : uri.getLastPathSegment();
+    }
+
+    private void onBookSelected(int slot, Intent data) {
+        Uri uri = data.getData();
+        String filename = selectedFilename(uri);
+        try {
+            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) { }
+        String title = prefs.getString("title_" + slot, "");
+        SharedPreferences.Editor edit = prefs.edit()
+                .putString("book_" + slot, uri.toString())
+                .putString("book_name_" + slot, filename)
+                .putBoolean("direct_" + slot, true);
+        if (title.length() == 0 || title.equals("Моя книга") || title.equals("Книга Анны")) {
+            edit.putString("title_" + slot, filename.replaceFirst("(?i)\\.(epub|fb2|zip|pdf|txt)$", ""));
+        }
+        edit.apply();
+        Toast.makeText(this, "Книга закреплена. Ищу обложку…", Toast.LENGTH_SHORT).show();
+        renderHome();
+        new Thread(() -> {
+            Bitmap cover = BookPreview.extract(getApplicationContext(), uri, filename);
+            boolean saved = false;
+            if (cover != null) {
+                try (FileOutputStream out = openFileOutput("auto_cover_" + slot + ".jpg", MODE_PRIVATE)) {
+                    saved = cover.compress(Bitmap.CompressFormat.JPEG, 85, out);
+                } catch (Exception ignored) { }
+                cover.recycle();
+            }
+            final boolean found = saved;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                renderHome();
+                Toast.makeText(this, found ? "Обложка найдена" :
+                        "Обложка не найдена. Можно выбрать картинку вручную.", Toast.LENGTH_LONG).show();
+            });
+        }).start();
+    }
+
     private void pickCover(int slot) {
         Intent select = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         select.addCategory(Intent.CATEGORY_OPENABLE);
@@ -465,8 +612,23 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_COVER_BASE && requestCode != PICK_COVER_BASE + 1) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == PICK_FILE_FROM_STORAGE) {
+            try {
+                Intent view = new Intent(Intent.ACTION_VIEW);
+                view.setDataAndType(data.getData(), getContentResolver().getType(data.getData()));
+                view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(view, "Открыть файл"));
+            } catch (Exception ignored) {
+                Toast.makeText(this, "Файл выбран. Для управления файлами назначь файловый менеджер.", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        if (requestCode == PICK_BOOK_BASE || requestCode == PICK_BOOK_BASE + 1) {
+            onBookSelected(requestCode - PICK_BOOK_BASE, data);
+            return;
+        }
+        if (requestCode != PICK_COVER_BASE && requestCode != PICK_COVER_BASE + 1) return;
         int slot = requestCode - PICK_COVER_BASE;
         Uri uri = data.getData();
         try {
