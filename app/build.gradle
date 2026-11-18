@@ -14,7 +14,20 @@ android {
         versionName '0.3.0'
     }
 
+    // Use exactly the keystore cached by CI, rather than an SDK-dependent
+    // default path. This keeps signatures stable between consecutive builds.
+    signingConfigs {
+        debug {
+            storeFile file(System.getenv('HOME') + '/.android/debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
         }
