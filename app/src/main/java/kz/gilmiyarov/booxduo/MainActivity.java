@@ -231,10 +231,7 @@ public final class MainActivity extends Activity {
             .setTitle("Выбери книгу из библиотеки BOOX")
             .setItems(names, (d, index) -> {
                 BooxLibrary.Book book = booxLibrary.books.get(index);
-                prefs.edit().putString("boox_link_" + slot, book.key()).apply();
-                if (!book.name.isEmpty()) prefs.edit().putString("title_" + slot, book.name).apply();
-                showTab(activeTab);
-                Toast.makeText(this, "BOOX: книга связана. Читалка не менялась.", Toast.LENGTH_SHORT).show();
+                bindBookToCard(slot, book);
             })
             .setNeutralButton("Отвязать", (d,w) -> {
                 prefs.edit().remove("boox_link_" + slot).apply();
@@ -322,20 +319,33 @@ public final class MainActivity extends Activity {
         }
     }
 
+    // A BOOX metadata link is NOT an Android file launch. Do not confuse a
+    // selected title with ReadEra's "last opened" history.
     private void openReader(int slot) {
-        prefs.edit().putLong("last_launch_" + slot, System.currentTimeMillis()).apply();
-        AppEntry selected = selectedApp(slot);
-        if (selected == null) {
-            Toast.makeText(this, "Сначала выбери читалку", Toast.LENGTH_SHORT).show();
+        AppEntry reader = selectedApp(slot);
+        if (reader == null) {
             showAppPicker(slot, null);
-        } else {
-            Uri book = savedBook(slot);
-            if (book != null && prefs.getBoolean("direct_" + slot, false)) {
-                launchPinnedBook(slot, selected, book);
-            } else {
-                launchApp(selected);
+            return;
+        }
+        Uri file = savedBook(slot);
+        String selectedKey = prefs.getString("boox_link_" + slot, null);
+        String boundKey = prefs.getString("bound_book_key_" + slot, null);
+
+        // An older APK may have saved a URI for a different book. Never use it
+        // once the book on the card changes.
+        if (file == null || (selectedKey != null && !selectedKey.equals(boundKey))) {
+            BooxLibrary.Book linked = linkedBooxBook(slot);
+            if (linked != null && tryBindAccessibleFile(slot, linked)) {
+                file = savedBook(slot);
             }
         }
+        if (file == null || (selectedKey != null
+                && !selectedKey.equals(prefs.getString("bound_book_key_" + slot, null)))) {
+            showSelectExactBookDialog(slot);
+            return;
+        }
+        prefs.edit().putLong("last_launch_" + slot, System.currentTimeMillis()).apply();
+        launchPinnedBook(slot, reader, file);
     }
 
     private Uri savedBook(int slot) {
@@ -344,17 +354,90 @@ public final class MainActivity extends Activity {
         catch (Exception e) { return null; }
     }
 
-    private void launchPinnedBook(int slot, AppEntry app, Uri uri) {
+    private boolean tryBindAccessibleFile(int slot, BooxLibrary.Book book) {
+        if (book == null || book.path == null || book.path.trim().isEmpty()) return false;
         try {
-            Intent view = new Intent(Intent.ACTION_VIEW);
-            view.setDataAndType(uri, getBookMime(prefs.getString("book_name_" + slot, "")));
-            view.setPackage(app.component.getPackageName());
-            view.setClipData(ClipData.newUri(getContentResolver(), "book", uri));
-            view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            File file = new File(book.path);
+            if (!file.isFile() || !file.canRead()) return false;
+            prefs.edit()
+                .putString("book_" + slot, SharedFileProvider.uriFor(file).toString())
+                .putString("book_name_" + slot, file.getName())
+                .putString("bound_book_key_" + slot, book.key())
+                .putBoolean("direct_" + slot, true)
+                .apply();
+            return true;
+        } catch (Exception ignored) { return false; }
+    }
+
+    private void showSelectExactBookDialog(int slot) {
+        BooxLibrary.Book book = linkedBooxBook(slot);
+        String name = book == null
+                ? prefs.getString("title_" + slot, "выбранная книга") : book.name;
+        new AlertDialog.Builder(this)
+            .setTitle("Нужно выбрать файл книги")
+            .setMessage("Для «" + name + "» пока не привязан доступный файл. "
+                + "Если просто запустить ReadEra, она может открыть другую книгу. "
+                + "Выбери EPUB, FB2 или PDF именно этой книги.")
+            .setPositiveButton("Выбрать файл", (d,w) -> pickBook(slot))
+            .setNegativeButton("Отмена", null)
+            .show();
+    }
+
+    private void launchPinnedBook(int slot, AppEntry app, Uri uri) {
+        final String filename = prefs.getString("book_name_" + slot, "");
+        Intent view = new Intent(Intent.ACTION_VIEW);
+        view.setDataAndType(uri, getBookMime(filename));
+        view.setPackage(app.component.getPackageName());
+        view.setClipData(ClipData.newUri(getContentResolver(), filename, uri));
+        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
             startActivity(view);
         } catch (ActivityNotFoundException | SecurityException e) {
-            Toast.makeText(this, "Читалка не открыла выбранный файл — запускаю её обычным способом", Toast.LENGTH_LONG).show();
-            launchApp(app);
+            // Never silently launch the reader's last book: it might be a
+            // different title from the one displayed on the card.
+            new AlertDialog.Builder(this)
+                .setTitle("Читалка не открыла файл")
+                .setMessage("«" + filename + "» не удалось передать в "
+                    + app.label + ". Можно открыть этот же файл через другую читалку.")
+                .setPositiveButton("Выбрать читалку", (d,w) -> {
+                    Intent anyReader = new Intent(Intent.ACTION_VIEW);
+                    anyReader.setDataAndType(uri, getBookMime(filename));
+                    anyReader.setClipData(ClipData.newUri(getContentResolver(), filename, uri));
+                    anyReader.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    try {
+                        startActivity(Intent.createChooser(anyReader, "Открыть именно эту книгу"));
+                    } catch (Exception exc) {
+                        Toast.makeText(this, "Нет приложения, способного открыть файл",
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNeutralButton("Выбрать файл заново", (d,w) -> pickBook(slot))
+                .setNegativeButton("Отмена", null)
+                .show();
+        }
+    }
+
+    private void bindBookToCard(int slot, BooxLibrary.Book book) {
+        // Clear the previous book's URI and manual page count at the same time
+        // as changing the title. Keeps card + launch intent consistent.
+        prefs.edit()
+            .putString("boox_link_" + slot, book.key())
+            .putString("title_" + slot, book.name)
+            .remove("book_" + slot)
+            .remove("book_name_" + slot)
+            .remove("bound_book_key_" + slot)
+            .remove("page_" + slot)
+            .remove("total_" + slot)
+            .remove("last_launch_" + slot)
+            .putBoolean("direct_" + slot, true)
+            .apply();
+        showTab(activeTab);
+        if (!tryBindAccessibleFile(slot, book)) {
+            showSelectExactBookDialog(slot);
+        } else {
+            Toast.makeText(this, "Книга выбрана — карточка откроет именно этот файл",
+                    Toast.LENGTH_LONG).show();
+            showTab(activeTab);
         }
     }
 
@@ -638,12 +721,7 @@ public final class MainActivity extends Activity {
                 if (which == 0) openCarouselBook(book);
                 else {
                     int slot = which - 1;
-                    prefs.edit().putString("boox_link_" + slot, book.key())
-                        .putString("title_" + slot, book.name).apply();
-                    Toast.makeText(this,
-                            "Карточка обновлена. Читалка по-прежнему открывает свой последний документ.",
-                            Toast.LENGTH_LONG).show();
-                    showTab(0);
+                    bindBookToCard(slot, book);
                 }
             })
             .setNegativeButton("Закрыть", null)
@@ -1113,7 +1191,7 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.9 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.10 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
@@ -1515,14 +1593,19 @@ public final class MainActivity extends Activity {
         try {
             getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (Exception ignored) { }
-        String title = prefs.getString("title_" + slot, "");
+        BooxLibrary.Book linked = linkedBooxBook(slot);
+        boolean sameBook = linked != null && (bookStem(filename).equals(bookStem(linked.name))
+                || bookStem(filename).equals(bookStem(linked.path)));
+        String key = sameBook ? linked.key() : "file:" + uri.toString();
         SharedPreferences.Editor edit = prefs.edit()
                 .putString("book_" + slot, uri.toString())
                 .putString("book_name_" + slot, filename)
+                .putString("bound_book_key_" + slot, key)
+                .putString("title_" + slot, sameBook && !linked.name.isEmpty()
+                        ? linked.name : filename)
                 .putBoolean("direct_" + slot, true);
-        if (title.length() == 0 || title.equals("Моя книга") || title.equals("Книга Анны")) {
-            edit.putString("title_" + slot, filename.replaceFirst("(?i)\\.(epub|fb2|zip|pdf|txt)$", ""));
-        }
+        if (!sameBook) edit.remove("boox_link_" + slot);
+        if (!sameBook) edit.remove("page_" + slot).remove("total_" + slot);
         edit.apply();
         Toast.makeText(this, "Книга закреплена. Ищу обложку…", Toast.LENGTH_SHORT).show();
         showTab(activeTab);
