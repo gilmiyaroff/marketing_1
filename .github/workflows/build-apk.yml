@@ -35,6 +35,26 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      # Keep one debug signing identity between routine CI builds.
+      # The first install of this key still requires uninstalling the earlier APK.
+      # For permanent release signing, migrate this keystore to encrypted repository secrets.
+      - name: Reuse debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: boox-duo-debug-signing-v1
+
+      - name: Generate debug signing key if missing
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA -keysize 2048 -validity 10000
+          fi
+
       - name: Build installable debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Publish APK artifact
