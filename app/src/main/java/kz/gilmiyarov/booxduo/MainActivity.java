@@ -213,35 +213,47 @@ public final class MainActivity extends Activity {
     private void showBooxBookPicker(int slot) {
         if (booxLibrary == null) {
             pendingBookPicker = slot;
-            Toast.makeText(this, "Загружаю последние книги BOOX…", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this,"Загружаю книги BOOX…",Toast.LENGTH_SHORT).show();
             refreshBooxLibrary(false);
             return;
         }
         if (!"ok".equals(booxLibrary.status)) {
-            new AlertDialog.Builder(this).setTitle("BOOX библиотека")
-                .setMessage(booxLibrary.details + ". На этой модели интеграция может быть недоступна.")
-                .setNegativeButton("Закрыть", null)
-                .setPositiveButton("Проверить снова", (d,w) -> refreshBooxLibrary(true)).show();
+            new AlertDialog.Builder(this)
+                .setTitle("Библиотека недоступна")
+                .setMessage(booxLibrary.details)
+                .setPositiveButton("Выбрать файл", (d,w)->pickBook(slot))
+                .setNeutralButton("Повторить", (d,w)->{
+                    pendingBookPicker=slot;
+                    refreshBooxLibrary(false);
+                })
+                .setNegativeButton("Отмена",null).show();
             return;
         }
         if (booxLibrary.books.isEmpty()) {
-            Toast.makeText(this, "BOOX не возвращает записи книг", Toast.LENGTH_LONG).show();
+            new AlertDialog.Builder(this)
+                .setTitle("Библиотека пуста")
+                .setMessage("Можно выбрать файл книги напрямую.")
+                .setPositiveButton("Выбрать файл",(d,w)->pickBook(slot))
+                .setNegativeButton("Отмена",null).show();
             return;
         }
-        int max = Math.min(booxLibrary.books.size(), 130);
-        CharSequence[] names = new CharSequence[max];
-        for (int i=0;i<max;i++) names[i] = booxLibrary.books.get(i).description();
-        new AlertDialog.Builder(this)
-            .setTitle("Выбери книгу из библиотеки BOOX")
-            .setItems(names, (d, index) -> {
-                BooxLibrary.Book book = booxLibrary.books.get(index);
-                bindBookToCard(slot, book);
-            })
-            .setNeutralButton("Отвязать", (d,w) -> {
-                prefs.edit().remove("boox_link_" + slot).apply();
+        BookPickerDialog.show(this,booxLibrary.books,new BookPickerDialog.Listener(){
+            @Override public void select(BooxLibrary.Book book) {
+                bindBookToCard(slot,book);
+            }
+            @Override public void unlink() {
+                prefs.edit().remove("boox_link_" + slot)
+                    .remove("bound_book_key_" + slot)
+                    .remove("book_" + slot)
+                    .remove("book_name_" + slot)
+                    .remove("title_" + slot)
+                    .remove("page_" + slot).remove("total_" + slot).apply();
                 showTab(activeTab);
-            })
-            .setNegativeButton("Отмена", null).show();
+            }
+            @Override public void browseFile() {
+                pickBook(slot);
+            }
+        });
     }
 
     private void scanApps() {
@@ -575,22 +587,20 @@ public final class MainActivity extends Activity {
         scroll.setBackgroundColor(PAPER);
 
         LinearLayout body = vertical();
-        body.setPadding(dp(13), dp(12), dp(13), dp(14));
+        body.setPadding(dp(12), dp(8), dp(12), dp(12));
         scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
 
-        body.addView(text("НАША БИБЛИОТЕКА", 10, MUTED, true), margins(-1, -2, 0, 0, 0, 4));
-        body.addView(text("Наши книги", 25, INK, true), margins(-1, -2, 0, 0, 0, 2));
+        body.addView(text("НАША БИБЛИОТЕКА", 10, MUTED, true), margins(-1, -2, 0, 0, 0, 2));
+        body.addView(text("Наши книги", 23, INK, true), margins(-1, -2, 0, 0, 0, 1));
         String date = new SimpleDateFormat("EEEE, d MMMM", new Locale("ru", "RU")).format(new Date());
-        body.addView(text(date, 12, MUTED, false), margins(-1, -2, 0, 0, 0, 13));
+        body.addView(text(date, 11, MUTED, false), margins(-1, -2, 0, 0, 0, 8));
 
         // The three cards share the same section-cover and metadata layout.
-        body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 202, 0, 0, 0, 9));
-        body.addView(readerCard(1, "АННЫ", "", ""), margins(-1, 202, 0, 0, 0, 9));
-        body.addView(readerCard(2, "АМЕЛИИ", "", ""), margins(-1, 202, 0, 0, 0, 8));
+        body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 136, 0, 0, 0, 7));
+        body.addView(readerCard(1, "АННЫ", "", ""), margins(-1, 136, 0, 0, 0, 9));
+        body.addView(readerCard(2, "АМЕЛИИ", "", ""), margins(-1, 136, 0, 0, 0, 6));
 
-        TextView hint = text("«Сменить» выбирает текущую книгу · удержание карточки тоже", 11, MUTED, false);
-        hint.setGravity(Gravity.CENTER);
-        body.addView(hint, margins(-1, -2, 0, 0, 0, 4));
+        
 
         addAllBooksCarousel(body);
         scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> allBooksVerticalScrollY = y);
@@ -1119,96 +1129,7 @@ public final class MainActivity extends Activity {
         LinearLayout[] output = new LinearLayout[1];
         ScrollView scroll = newSection(output);
         LinearLayout body = output[0];
-        sectionHeading(body, "Приложения", "Нажми для запуска · удерживай для управления");
-
-        EditText search = new EditText(this);
-        search.setSingleLine(true);
-        search.setTextSize(14);
-        search.setTextColor(INK);
-        search.setHint("Поиск приложений");
-        search.setBackground(panel(PAPER, EDGE, 7));
-        search.setPadding(dp(12), 0, dp(12), 0);
-        body.addView(search, margins(-1, 48, 0, 0, 0, 13));
-
-        LinearLayout grid = vertical();
-        body.addView(grid);
-
-        Runnable rebuild = () -> {
-            grid.removeAllViews();
-            String filter = search.getText().toString().trim().toLowerCase(Locale.ROOT);
-            ArrayList<AppEntry> visible = new ArrayList<>();
-            for (AppEntry entry : apps) {
-                if (entry.description().toLowerCase(Locale.ROOT).contains(filter)) {
-                    visible.add(entry);
-                }
-            }
-            if (visible.isEmpty()) {
-                grid.addView(text("Приложения не найдены", 13, MUTED, false),
-                        margins(-1, -2, 0, 4, 0, 0));
-                return;
-            }
-
-            PackageManager manager = getPackageManager();
-            final int columns = 3;
-            for (int offset = 0; offset < visible.size(); offset += columns) {
-                LinearLayout line = horizontal();
-                for (int col = 0; col < columns; col++) {
-                    int index = offset + col;
-                    if (index >= visible.size()) {
-                        line.addView(new View(this), new LinearLayout.LayoutParams(0, dp(110), 1));
-                        continue;
-                    }
-                    AppEntry app = visible.get(index);
-                    LinearLayout tile = vertical();
-                    tile.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-                    tile.setPadding(dp(4), dp(9), dp(4), dp(4));
-                    tile.setBackground(panel(PAPER, EDGE, 7));
-
-                    ImageView appIcon = new ImageView(this);
-                    appIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                    try {
-                        appIcon.setImageDrawable(manager.getActivityIcon(app.component));
-                    } catch (PackageManager.NameNotFoundException ex) {
-                        try {
-                            appIcon.setImageDrawable(manager.getApplicationIcon(app.component.getPackageName()));
-                        } catch (PackageManager.NameNotFoundException ignored) {
-                            appIcon.setImageResource(android.R.drawable.sym_def_app_icon);
-                        }
-                    }
-                    LinearLayout.LayoutParams iconLayout =
-                            new LinearLayout.LayoutParams(dp(46), dp(46));
-                    iconLayout.gravity = Gravity.CENTER_HORIZONTAL;
-                    iconLayout.bottomMargin = dp(7);
-                    tile.addView(appIcon, iconLayout);
-
-                    TextView title = text(app.label, 12, INK, false);
-                    title.setGravity(Gravity.CENTER);
-                    title.setMaxLines(2);
-                    title.setEllipsize(TextUtils.TruncateAt.END);
-                    tile.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-                    tile.setOnClickListener(v -> launchApp(app));
-                    tile.setOnLongClickListener(v -> {
-                        appDetails(app.component.getPackageName());
-                        return true;
-                    });
-
-                    LinearLayout.LayoutParams layout =
-                            new LinearLayout.LayoutParams(0, dp(106), 1);
-                    if (col > 0) layout.leftMargin = dp(8);
-                    line.addView(tile, layout);
-                }
-                grid.addView(line, margins(-1, -2, 0, 0, 0, 8));
-            }
-        };
-        search.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after) { }
-            @Override public void onTextChanged(CharSequence s,int start,int before,int count) {
-                rebuild.run();
-            }
-            @Override public void afterTextChanged(Editable e) { }
-        });
-        rebuild.run();
+        body.addView(new AppsDrawer(this), margins(-1, -2, 0, 0, 0, 4));
         showPage(scroll, 2);
     }
 
@@ -1434,7 +1355,7 @@ public final class MainActivity extends Activity {
                     openSystemPanel(Settings.ACTION_INTERNAL_STORAGE_SETTINGS,"Память устройства")),
             setting("Обновить книги","update",()->refreshBooxLibrary(true))
         );
-        body.addView(text("BOOX DUO 0.13 · Только ссылки на системные разделы, без изменения прошивки.",
+        body.addView(text("BOOX DUO 0.14 · Только ссылки на системные разделы, без изменения прошивки.",
                 10,MUTED,false),margins(-1,-2,0,11,0,9));
         showPage(scroll,3);
     }
@@ -1483,7 +1404,7 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.13 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.14 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
@@ -1518,153 +1439,89 @@ public final class MainActivity extends Activity {
         parent.addView(button, params);
     }
 
-    private View readerCard(int slot, String person, String ignoredTitle, String ignoredMonogram) {
-        final boolean dark = slot == 0;
-        final int foreground = dark ? Color.WHITE : INK;
-
-        LinearLayout card = horizontal();
-        card.setPadding(dp(9), dp(9), dp(9), dp(9));
+    private View readerCard(int slot,String owner,String unusedTitle,String unusedMonogram) {
+        LinearLayout card=horizontal();
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setBackground(panel(PAPER, EDGE, 9));
-        // Entire card is a large reading target; only the bottom-right action
-        // intercepts taps to change the currently assigned book.
-        card.setOnClickListener(v -> {
-            if (linkedBooxBook(slot) == null && savedBook(slot) == null) {
-                showBooxBookPicker(slot);
-            } else {
-                openReader(slot);
-            }
+        card.setPadding(dp(6),dp(6),dp(6),dp(6));
+        card.setBackground(panel(PAPER,EDGE,8));
+        card.setOnClickListener(v->{
+            if(linkedBooxBook(slot)==null && savedBook(slot)==null)showBooxBookPicker(slot);
+            else openReader(slot);
         });
-        card.setOnLongClickListener(v -> { showBooxBookPicker(slot); return true; });
+        card.setOnLongClickListener(v->{showBooxBookPicker(slot);return true;});
 
-        // The left side is a permanent *personal library cover*, NOT the
-        // current book cover. Both names use the same alignment and font sizes.
-        FrameLayout shelf = new FrameLayout(this);
-        shelf.setBackgroundColor(dark ? Color.BLACK : PAPER);
-        LinearLayout.LayoutParams shelfParams = new LinearLayout.LayoutParams(dp(122), -1);
-        shelfParams.rightMargin = dp(12);
-        card.addView(shelf, shelfParams);
-        shelf.setClipToOutline(true);
+        // Three square image assets supplied by the family. The lettering is
+        // already in each JPEG: never draw a second title over the cover.
+        ImageView art=new ImageView(this);
+        art.setImageResource(slot==0?R.drawable.shelf_ruslan:
+                slot==1?R.drawable.shelf_anna:R.drawable.shelf_amelia);
+        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        LinearLayout.LayoutParams coverParams=new LinearLayout.LayoutParams(dp(124),dp(124));
+        coverParams.rightMargin=dp(9);
+        card.addView(art,coverParams);
 
-        ImageView art = new ImageView(this);
-        art.setImageResource(slot == 0 ? R.drawable.art_ruslan
-                : slot == 1 ? R.drawable.art_anna : R.drawable.art_amelia);
-        art.setScaleType(ImageView.ScaleType.FIT_XY);
-        shelf.addView(art, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout infoFrame=new FrameLayout(this);
+        card.addView(infoFrame,new LinearLayout.LayoutParams(0,-1,1));
+        LinearLayout info=vertical();
+        info.setPadding(0,0,0,dp(29));
+        infoFrame.addView(info,new FrameLayout.LayoutParams(-1,-1));
 
-        LinearLayout shelfText = vertical();
-        shelfText.setGravity(Gravity.CENTER);
-        FrameLayout.LayoutParams overlay = new FrameLayout.LayoutParams(-1, dp(114), Gravity.CENTER);
-        shelf.addView(shelfText, overlay);
-
-        TextView openBook = text("⌑", 27, foreground, false);
-        openBook.setGravity(Gravity.CENTER);
-        shelfText.addView(openBook, margins(-1, 35, 0, 0, 0, 4));
-
-        TextView caption = text("К Н И Г И", 12, foreground, false);
-        caption.setGravity(Gravity.CENTER);
-        shelfText.addView(caption, margins(-1, -2, 0, 0, 0, 1));
-
-        TextView owner = text(person, 17, foreground, true);
-        owner.setLetterSpacing(.04f);
-        owner.setGravity(Gravity.CENTER);
-        owner.setSingleLine(true);
-        shelfText.addView(owner, margins(-1, -2, 0, 0, 0, 8));
-
-        View bar = new View(this);
-        bar.setBackgroundColor(foreground);
-        LinearLayout.LayoutParams barParams = margins(38, 2, 0, 0, 0, 0);
-        barParams.gravity = Gravity.CENTER_HORIZONTAL;
-        shelfText.addView(bar, barParams);
-
-        // The right side contains dynamic book metadata from a saved unique
-        // BOOX library link, or user-pinned book. No ownership guessing.
-        // Bottom action is pinned independently of metadata height. The prior
-        // vertical stack pushed the controls outside the card for long titles.
-        FrameLayout infoFrame = new FrameLayout(this);
-        card.addView(infoFrame, new LinearLayout.LayoutParams(0, -1, 1));
-        LinearLayout info = vertical();
-        info.setPadding(0, dp(3), 0, dp(40));
-        infoFrame.addView(info, new FrameLayout.LayoutParams(-1, -1));
-
-        TextView header = text("СЕЙЧАС ЧИТАЕТ", 10, MUTED, true);
-        header.setLetterSpacing(.07f);
-        info.addView(header, margins(-1, -2, 0, 0, 0, 5));
-
-        BooxLibrary.Book book = linkedBooxBook(slot);
-        String titleValue = book != null && !book.name.isEmpty()
-                ? book.name : prefs.getString("title_" + slot, "");
-        if (TextUtils.isEmpty(titleValue) || "Моя книга".equals(titleValue)
-                || "Книга Анны".equals(titleValue)) {
-            titleValue = prefs.getString("book_name_" + slot, "Книга не выбрана");
+        BooxLibrary.Book book=linkedBooxBook(slot);
+        String titleValue=book!=null && !book.name.isEmpty()
+                ? book.name:prefs.getString("title_"+slot,"");
+        if(TextUtils.isEmpty(titleValue) || "Моя книга".equals(titleValue)
+                || "Книга Анны".equals(titleValue) || "Книга Амелии".equals(titleValue)) {
+            titleValue=prefs.getString("book_name_"+slot,"Книга не выбрана");
         }
-        TextView title = text(titleValue, 18, INK, true);
-        title.setMaxLines(2);
-        title.setEllipsize(TextUtils.TruncateAt.END);
-        info.addView(title, margins(-1, -2, 0, 0, 0, 5));
+        TextView tag=text("СЕЙЧАС ЧИТАЕТ",9,MUTED,true);
+        tag.setLetterSpacing(.04f);
+        info.addView(tag,margins(-1,-2,0,0,0,2));
 
-        AppEntry reader = familyReader();
-        TextView readerName = text(reader == null ? "Укажите общую читалку" : reader.label,
-                11, MUTED, false);
-        readerName.setMaxLines(1);
-        readerName.setEllipsize(TextUtils.TruncateAt.END);
-        info.addView(readerName, margins(-1, -2, 0, 0, 0, 8));
+        TextView name=text(titleValue,15,INK,true);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        info.addView(name,margins(-1,-2,0,0,0,2));
 
-        boolean trusted = book != null && book.hasUsableProgress();
-        int current = trusted ? book.currentPage : prefs.getInt("page_" + slot, 0);
-        int total = trusted ? book.totalPages : prefs.getInt("total_" + slot, 0);
-        boolean manual = !trusted && total >= 3 && current >= 0 && current <= total;
-        boolean available = trusted || manual;
-        int percent = available ? Math.min(100, Math.round(100f * current / total)) : -1;
-        if (available) {
-            String source = trusted ? "BOOX" : "вручную";
-            String progressText;
-            if (trusted && book.normalizedProgress()) {
-                progressText = percent + "% · " + source;
-            } else {
-                progressText = current + "/" + total + " · " + percent + "% · " + source;
-            }
-            info.addView(text(progressText, 11, MUTED, false), margins(-1, -2, 0, 0, 0, 5));
-            LinearLayout progressLine = horizontal();
-            progressLine.setBackgroundColor(WASH);
-            View fill = new View(this);
-            fill.setBackgroundColor(INK);
-            progressLine.addView(fill, new LinearLayout.LayoutParams(0, dp(4), percent));
-            progressLine.addView(new View(this), new LinearLayout.LayoutParams(0, dp(4), 100 - percent));
-            info.addView(progressLine, margins(-1, 4, 0, 0, 0, 6));
-        } else {
-            String message = "Нет достоверных данных о прогрессе";
-            info.addView(text(message, 11, MUTED, false), margins(-1, -2, 0, 0, 0, 8));
+        AppEntry reader=familyReader();
+        TextView app=text(reader==null?"Выбери читалку":reader.label,10,MUTED,false);
+        app.setMaxLines(1);
+        app.setEllipsize(TextUtils.TruncateAt.END);
+        info.addView(app,margins(-1,-2,0,0,0,3));
+
+        boolean trusted=book!=null && book.hasUsableProgress();
+        int current=trusted?book.currentPage:prefs.getInt("page_"+slot,0);
+        int total=trusted?book.totalPages:prefs.getInt("total_"+slot,0);
+        boolean manual=!trusted && total>=3 && current>=0 && current<=total;
+        boolean known=trusted||manual;
+        if(known){
+            int percent=Math.min(100,Math.round(100f*current/total));
+            String label=trusted && book.normalizedProgress()?percent+"%":
+                    current+"/"+total+" · "+percent+"%";
+            info.addView(text(label+" · "+(trusted?"BOOX":"вручную"),10,MUTED,false),
+                    margins(-1,-2,0,0,0,3));
+            LinearLayout bar=horizontal();
+            bar.setBackgroundColor(WASH);
+            View filled=new View(this);
+            filled.setBackgroundColor(INK);
+            bar.addView(filled,new LinearLayout.LayoutParams(0,dp(3),percent));
+            bar.addView(new View(this),new LinearLayout.LayoutParams(0,dp(3),100-percent));
+            info.addView(bar,margins(-1,3,0,0,0,1));
+        }else{
+            info.addView(text("Прогресс не определён",10,MUTED,false),
+                    margins(-1,-2,0,0,0,3));
         }
 
-        long last = book != null && book.lastAccess > 0 ? book.lastAccess
-                : prefs.getLong("last_launch_" + slot, 0);
-        if (last > 0) {
-            String formatted = new SimpleDateFormat("dd.MM.yyyy HH:mm", new Locale("ru", "RU"))
-                    .format(new Date(last));
-            String prefix = book != null && book.lastAccess > 0 ? "BOOX: " : "Запуск: ";
-            TextView lastLabel = text(prefix + formatted, 10, MUTED, false);
-            lastLabel.setSingleLine(true);
-            lastLabel.setEllipsize(TextUtils.TruncateAt.END);
-            info.addView(lastLabel, margins(-1, -2, 0, 1, 0, 3));
-        }
+        View divider=separator();
+        FrameLayout.LayoutParams dividerPos=new FrameLayout.LayoutParams(-1,dp(1),Gravity.BOTTOM);
+        dividerPos.bottomMargin=dp(31);
+        infoFrame.addView(divider,dividerPos);
 
-        // One consistent action per slot, pinned to the bottom RIGHT.
-        // No redundant "ЧИТАТЬ" label: tapping anywhere on the card reads.
-        View separatorLine = separator();
-        FrameLayout.LayoutParams separatorPos =
-                new FrameLayout.LayoutParams(-1, dp(1), Gravity.BOTTOM);
-        separatorPos.bottomMargin = dp(37);
-        infoFrame.addView(separatorLine, separatorPos);
-
-        boolean bookSelected = book != null || savedBook(slot) != null;
-        TextView change = text(bookSelected ? "СМЕНИТЬ" : "ВЫБРАТЬ КНИГУ", 11, INK, true);
-        change.setGravity(Gravity.CENTER);
-        change.setPadding(dp(9), 0, dp(4), 0);
-        change.setOnClickListener(v -> showBooxBookPicker(slot));
-        FrameLayout.LayoutParams actionPos =
-                new FrameLayout.LayoutParams(-2, dp(36), Gravity.RIGHT | Gravity.BOTTOM);
-        infoFrame.addView(change, actionPos);
+        boolean selected=book!=null || savedBook(slot)!=null;
+        TextView change=text(selected?"СМЕНИТЬ":"ВЫБРАТЬ КНИГУ",10,INK,true);
+        change.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        change.setPadding(dp(7),0,dp(2),0);
+        change.setOnClickListener(v->showBooxBookPicker(slot));
+        infoFrame.addView(change,new FrameLayout.LayoutParams(-2,dp(30),Gravity.RIGHT|Gravity.BOTTOM));
         return card;
     }
 
