@@ -1600,7 +1600,7 @@ public final class MainActivity extends Activity {
         sectionButton(body,"Разрешения на доступ к файлам",this::askFilesAccess);
         body.addView(text("Показатели относятся к доступному внутреннему разделу памяти, а не к облачному хранилищу.",12,MUTED,false));
         sectionButton(body,"← Все настройки",this::renderSettingsTab);
-        showPage(scroll,3);
+        showPage(scroll,4);
     }
 
     private void renderSettingsTab() {
@@ -1688,9 +1688,9 @@ public final class MainActivity extends Activity {
                     openSystemPanel(Settings.ACTION_INTERNAL_STORAGE_SETTINGS,"Память устройства")),
             setting("Обновить книги","update",()->refreshBooxLibrary(true))
         );
-        body.addView(text("BOOX DUO 0.14 · Только ссылки на системные разделы, без изменения прошивки.",
+        body.addView(text("BOOX DUO 0.15 · Только ссылки на системные разделы, без изменения прошивки.",
                 10,MUTED,false),margins(-1,-2,0,11,0,9));
-        showPage(scroll,3);
+        showPage(scroll,4);
     }
 
     private void renderReadingSettings() {
@@ -1737,13 +1737,13 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.14 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.15 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
-        showPage(scroll, 3);
+        showPage(scroll, 4);
     }
 
     @Override public void onBackPressed() {
-        if (activeTab == 3 && readingSettingsOpen) {
+        if (activeTab == 4 && readingSettingsOpen) {
             renderSettingsTab();
             return;
         }
