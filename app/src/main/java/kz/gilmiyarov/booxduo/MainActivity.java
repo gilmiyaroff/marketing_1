@@ -19,6 +19,11 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.provider.DocumentsContract;
+import android.os.Environment;
+import android.os.StatFs;
+import android.text.format.Formatter;
+import android.content.ContentResolver;
 import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -63,6 +68,9 @@ public final class MainActivity extends Activity {
     private static final int PICK_COVER_BASE = 410;
     private static final int PICK_BOOK_BASE = 420;
     private static final int PICK_FILE_FROM_STORAGE = 430;
+    private static final int PICK_BROWSE_FOLDER = 510;
+    private int activeTab = 0;
+    private final List<String> folderTrail = new ArrayList<>();
 
     private final List<AppEntry> apps = new ArrayList<>();
     private SharedPreferences prefs;
@@ -97,7 +105,7 @@ public final class MainActivity extends Activity {
             scanApps();
             autoPickReaders();
             autoPickFileManager();
-            renderHome();
+            showTab(activeTab);
         }
     }
 
@@ -303,16 +311,306 @@ public final class MainActivity extends Activity {
 
         LinearLayout shortcuts = horizontal();
         body.addView(shortcuts, margins(-1, 45, 0, 0, 0, 0));
-        addShortcut(shortcuts, "Файлы", this::openFiles, true);
-        addShortcut(shortcuts, "Приложения", () -> showAppPicker(-1, null), true);
-        addShortcut(shortcuts, "Настройки", this::showSettings, false);
+        addShortcut(shortcuts, "Файлы", () -> showTab(1), true);
+        addShortcut(shortcuts, "Приложения", () -> showTab(2), true);
+        addShortcut(shortcuts, "Настройки", () -> showTab(3), false);
 
         LinearLayout spacer = vertical();
         body.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.2", 10, MUTED, false);
+        TextView footer = text("BOOX DUO   ·   E-INK EDITION   ·   0.3", 10, MUTED, false);
         footer.setGravity(Gravity.CENTER);
         body.addView(footer, margins(-1, -2, 0, 23, 0, 0));
-        setContentView(scroll);
+        showPage(scroll, 0);
+    }
+
+
+    // Four independently rendered sections. The same bottom navigation persists
+    // on every section, including after returning from a reader application.
+    private void showTab(int tab) {
+        if (tab == 0) renderHome();
+        else if (tab == 1) renderFileTab();
+        else if (tab == 2) renderAppTab();
+        else renderSettingsTab();
+    }
+
+    private void showPage(View content, int tab) {
+        activeTab = tab;
+        LinearLayout root = vertical();
+        root.setBackgroundColor(PAPER);
+        root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(separator(), margins(-1, 1, 0, 0, 0, 0));
+        LinearLayout navigation = horizontal();
+        navigation.setPadding(dp(3), dp(3), dp(3), dp(3));
+        String[] labels = {"Книги", "Файлы", "Приложения", "Настройки"};
+        int[] icons = { android.R.drawable.ic_menu_agenda,
+                android.R.drawable.ic_menu_save, android.R.drawable.ic_menu_sort_by_size,
+                android.R.drawable.ic_menu_preferences };
+        for (int i = 0; i < 4; i++) {
+            final int chosen = i;
+            LinearLayout item = vertical();
+            item.setGravity(Gravity.CENTER);
+            if (tab == i) item.setBackground(panel(WASH, EDGE, 6));
+            ImageView img = new ImageView(this);
+            img.setImageResource(icons[i]);
+            img.setColorFilter(tab == i ? INK : MUTED);
+            item.addView(img, margins(22, 22, 0, 0, 0, 3));
+            TextView label = text(labels[i], 10, tab == i ? INK : MUTED, tab == i);
+            label.setGravity(Gravity.CENTER);
+            item.addView(label, margins(-1, -2, 0, 0, 0, 0));
+            item.setOnClickListener(v -> { if (activeTab != chosen) showTab(chosen); });
+            navigation.addView(item, new LinearLayout.LayoutParams(0, dp(57), 1));
+        }
+        root.addView(navigation, margins(-1, 63, 0, 0, 0, 0));
+        setContentView(root);
+    }
+
+    private ScrollView newSection(LinearLayout[] output) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setBackgroundColor(PAPER);
+        LinearLayout body = vertical();
+        body.setPadding(dp(16), dp(12), dp(16), dp(20));
+        scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
+        output[0] = body;
+        return scroll;
+    }
+
+    private void sectionHeading(LinearLayout body, String title, String description) {
+        body.addView(text(title, 25, INK, true), margins(-1, -2, 0, 0, 0, 4));
+        body.addView(text(description, 12, MUTED, false), margins(-1, -2, 0, 0, 0, 14));
+    }
+
+    private void sectionButton(LinearLayout body, String name, Runnable action) {
+        body.addView(simpleAction(name, action), margins(-1, 46, 0, 0, 0, 9));
+    }
+
+    private void renderFileTab() {
+        LinearLayout[] output = new LinearLayout[1];
+        ScrollView scroll = newSection(output);
+        LinearLayout body = output[0];
+        sectionHeading(body, "Внутренняя память", "Книги, загрузки и личные файлы");
+        try {
+            StatFs stat = new StatFs(Environment.getExternalStorageDirectory().getAbsolutePath());
+            long free = stat.getAvailableBytes();
+            long total = stat.getTotalBytes();
+            LinearLayout memory = vertical();
+            memory.setPadding(dp(13), dp(11), dp(13), dp(11));
+            memory.setBackground(panel(WASH, EDGE, 8));
+            memory.addView(text("ПАМЯТЬ УСТРОЙСТВА", 11, MUTED, true), margins(-1, -2, 0, 0, 0, 5));
+            memory.addView(text("Свободно " + Formatter.formatShortFileSize(this, free)
+                + " из " + Formatter.formatShortFileSize(this, total), 15, INK, true),
+                margins(-1, -2, 0, 0, 0, 0));
+            body.addView(memory, margins(-1, -2, 0, 0, 0, 16));
+        } catch (Exception ignored) { }
+
+        body.addView(text("ТИПЫ ФАЙЛОВ", 11, MUTED, true), margins(-1, -2, 0, 0, 0, 8));
+        String[] categories = {"Документы", "Изображения", "Аудио", "Видео", "Загрузки", "APK"};
+        String[] types = {"application/*", "image/*", "audio/*", "video/*", "*/*",
+                "application/vnd.android.package-archive"};
+        for (int row = 0; row < 2; row++) {
+            LinearLayout gridRow = horizontal();
+            for (int col = 0; col < 3; col++) {
+                final int index = row * 3 + col;
+                LinearLayout tile = vertical();
+                tile.setGravity(Gravity.CENTER);
+                tile.setBackground(panel(PAPER, EDGE, 7));
+                TextView graphic = text(new String[]{"DOC", "IMG", "AUD", "VID", "DL", "APK"}[index],
+                    17, INK, true);
+                graphic.setGravity(Gravity.CENTER);
+                tile.addView(graphic, margins(-1, -2, 0, 0, 0, 6));
+                TextView caption = text(categories[index], 11, MUTED, false);
+                caption.setGravity(Gravity.CENTER);
+                tile.addView(caption);
+                tile.setOnClickListener(v -> {
+                    if (index == 4) selectFolder();
+                    else openFileCategory(types[index]);
+                });
+                LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, dp(100), 1);
+                if (col != 2) cell.rightMargin = dp(8);
+                gridRow.addView(tile, cell);
+            }
+            body.addView(gridRow, margins(-1, -2, 0, 0, 0, 8));
+        }
+        body.addView(text("МОИ ПАПКИ", 11, MUTED, true), margins(-1, -2, 0, 14, 0, 6));
+        sectionButton(body, "Выбрать папку для просмотра", this::selectFolder);
+        sectionButton(body, "Открыть менеджер BOOX", this::openFiles);
+        String tree = prefs.getString("browse_tree", null);
+        if (tree != null) {
+            Uri treeUri = Uri.parse(tree);
+            String folder = folderTrail.isEmpty() ? DocumentsContract.getTreeDocumentId(treeUri)
+                    : folderTrail.get(folderTrail.size() - 1);
+            if (folderTrail.size() > 1) {
+                sectionButton(body, "← Назад к предыдущей папке", () -> {
+                    folderTrail.remove(folderTrail.size() - 1);
+                    renderFileTab();
+                });
+            }
+            body.addView(text("СОДЕРЖИМОЕ ПАПКИ", 11, MUTED, true), margins(-1, -2, 0, 8, 0, 8));
+            try {
+                Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folder);
+                ArrayList<FileItem> entries = new ArrayList<>();
+                String[] projection = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                        DocumentsContract.Document.COLUMN_MIME_TYPE};
+                try (Cursor c = getContentResolver().query(children, projection, null, null, null)) {
+                    if (c != null) {
+                        while (c.moveToNext() && entries.size() < 350) {
+                            entries.add(new FileItem(c.getString(0), c.getString(1), c.getString(2)));
+                        }
+                    }
+                }
+                Collections.sort(entries, (a,b) -> {
+                    if (a.isFolder() != b.isFolder()) return a.isFolder() ? -1 : 1;
+                    return a.name.compareToIgnoreCase(b.name);
+                });
+                if (entries.isEmpty()) body.addView(text("Папка пуста", 13, MUTED, false));
+                for (FileItem f : entries) {
+                    TextView file = text((f.isFolder() ? "ПАПКА  " : "ФАЙЛ  ") + f.name, 13, INK, false);
+                    file.setPadding(dp(12), dp(11), dp(12), dp(11));
+                    file.setBackground(panel(PAPER, EDGE, 4));
+                    file.setOnClickListener(v -> {
+                        if (f.isFolder()) {
+                            folderTrail.add(f.id);
+                            renderFileTab();
+                        } else {
+                            openDocument(DocumentsContract.buildDocumentUriUsingTree(treeUri, f.id), f.mime);
+                        }
+                    });
+                    body.addView(file, margins(-1, -2, 0, 0, 0, 6));
+                }
+            } catch (Exception e) {
+                body.addView(text("Нет доступа к папке. Выбери её повторно.", 13, MUTED, false));
+            }
+        } else {
+            body.addView(text("Android 11 разрешает просмотр выбранных папок. Для полного доступа к памяти можно открыть менеджер BOOX.", 12, MUTED, false));
+        }
+        showPage(scroll, 1);
+    }
+
+    private static final class FileItem {
+        final String id, name, mime;
+        FileItem(String id, String name, String mime) {
+            this.id=id;
+            this.name=name == null ? "(без имени)" : name;
+            this.mime=mime == null ? "*/*" : mime;
+        }
+        boolean isFolder() { return DocumentsContract.Document.MIME_TYPE_DIR.equals(mime); }
+    }
+
+    private void openFileCategory(String mime) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mime);
+        try { startActivityForResult(intent, PICK_FILE_FROM_STORAGE); }
+        catch (Exception e) { Toast.makeText(this, "Не удалось открыть файлы", Toast.LENGTH_SHORT).show(); }
+    }
+
+    private void selectFolder() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try { startActivityForResult(intent, PICK_BROWSE_FOLDER); }
+        catch (Exception e) { Toast.makeText(this, "Выбор папки не поддерживается", Toast.LENGTH_LONG).show(); }
+    }
+
+    private void openDocument(Uri uri, String mime) {
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(uri, mime);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try { startActivity(Intent.createChooser(intent, "Открыть файл")); }
+        catch (Exception e) { Toast.makeText(this, "Не найдено приложение для этого файла", Toast.LENGTH_LONG).show(); }
+    }
+
+    private void renderAppTab() {
+        LinearLayout[] output = new LinearLayout[1];
+        ScrollView scroll = newSection(output);
+        LinearLayout body = output[0];
+        sectionHeading(body, "Приложения", "Нажми, чтобы открыть; удерживай для информации и удаления");
+        EditText filter = new EditText(this);
+        filter.setSingleLine(true);
+        filter.setTextColor(INK);
+        filter.setTextSize(15);
+        filter.setHint("Поиск приложений");
+        body.addView(filter, margins(-1, 48, 0, 0, 0, 12));
+        LinearLayout results = vertical();
+        body.addView(results);
+        Runnable refresh = () -> {
+            results.removeAllViews();
+            String query = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
+            int count=0;
+            for (AppEntry app : apps) {
+                if (!app.description().toLowerCase(Locale.ROOT).contains(query)) continue;
+                count++;
+                TextView item = text(app.label, 15, INK, true);
+                item.setBackground(panel(PAPER, EDGE, 7));
+                item.setPadding(dp(13), dp(12), dp(13), dp(12));
+                item.setOnClickListener(v -> launchApp(app));
+                item.setOnLongClickListener(v -> {
+                    appDetails(app.component.getPackageName()); return true;
+                });
+                results.addView(item, margins(-1, 48, 0, 0, 0, 7));
+            }
+            if (count == 0) results.addView(text("Ничего не найдено", 13, MUTED, false));
+        };
+        filter.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s,int start,int count,int after) {}
+            public void onTextChanged(CharSequence s,int start,int before,int count) { refresh.run(); }
+            public void afterTextChanged(Editable e) {}
+        });
+        refresh.run();
+        showPage(scroll, 2);
+    }
+
+    private void appDetails(String packageName) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + packageName));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "BOOX не открыл системные сведения о приложении", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void renderSettingsTab() {
+        LinearLayout[] output = new LinearLayout[1];
+        ScrollView scroll = newSection(output);
+        LinearLayout body = output[0];
+        sectionHeading(body, "Настройки", "Ваша домашняя библиотека");
+        for (int slot = 0; slot < 2; slot++) addSettingsForSlot(body, slot);
+        body.addView(text("ФАЙЛОВЫЙ МЕНЕДЖЕР", 13, INK, true),
+                margins(-1, -2, 0, 12, 0, 6));
+        AppEntry fileManager = selectedApp(2);
+        body.addView(text(fileManager == null ? "Не выбран" : fileManager.label, 12, MUTED, false),
+                margins(-1, -2, 0, 0, 0, 6));
+        sectionButton(body, "Выбрать файловый менеджер", () -> showAppPicker(2, null));
+        sectionButton(body, "Выбрать домашний экран Android", this::openHomeSettings);
+        sectionButton(body, "Сведения о приложении «Наши книги»", () -> appDetails(getPackageName()));
+        sectionButton(body, "Удалить только оболочку «Наши книги»", () ->
+                new AlertDialog.Builder(this)
+                    .setTitle("Удалить оболочку?")
+                    .setMessage("ReadEra, AlReaderX и ваши книги останутся на устройстве.")
+                    .setNegativeButton("Отмена", null)
+                    .setPositiveButton("Открыть удаление", (d,w) -> {
+                        try {
+                            Intent intent=new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                        } catch (Exception e) { appDetails(getPackageName()); }
+                    }).show());
+        body.addView(text("BOOX DUO 0.3 · Android 11 · Офлайн", 11, MUTED, false),
+                margins(-1, -2, 0, 8, 0, 5));
+        showPage(scroll, 3);
+    }
+
+    @Override public void onBackPressed() {
+        if (activeTab == 1 && folderTrail.size() > 1) {
+            folderTrail.remove(folderTrail.size() - 1);
+            renderFileTab();
+        } else if (activeTab != 0) {
+            showTab(0);
+        } else {
+            super.onBackPressed();
+        }
     }
 
     private void addShortcut(LinearLayout parent, String title, Runnable action, boolean first) {
@@ -432,9 +730,9 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Настройки наших книг")
                 .setView(scroll)
-                .setPositiveButton("Готово", (d, w) -> renderHome())
+                .setPositiveButton("Готово", (d, w) -> showTab(activeTab))
                 .create();
-        dialog.setOnDismissListener(d -> renderHome());
+        dialog.setOnDismissListener(d -> showTab(activeTab));
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -521,7 +819,7 @@ public final class MainActivity extends Activity {
             else {
                 saveTarget(slot, selection);
                 if (updated != null) updated.run();
-                renderHome();
+                showTab(activeTab);
             }
             picker.dismiss();
         });
@@ -579,7 +877,7 @@ public final class MainActivity extends Activity {
         }
         edit.apply();
         Toast.makeText(this, "Книга закреплена. Ищу обложку…", Toast.LENGTH_SHORT).show();
-        renderHome();
+        showTab(activeTab);
         new Thread(() -> {
             Bitmap cover = BookPreview.extract(getApplicationContext(), uri, filename);
             boolean saved = false;
@@ -592,7 +890,7 @@ public final class MainActivity extends Activity {
             final boolean found = saved;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                renderHome();
+                showTab(activeTab);
                 Toast.makeText(this, found ? "Обложка найдена" :
                         "Обложка не найдена. Можно выбрать картинку вручную.", Toast.LENGTH_LONG).show();
             });
@@ -613,12 +911,24 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == PICK_BROWSE_FOLDER) {
+            Uri uri = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                prefs.edit().putString("browse_tree", uri.toString()).apply();
+                folderTrail.clear();
+                folderTrail.add(DocumentsContract.getTreeDocumentId(uri));
+                renderFileTab();
+            } catch (Exception e) {
+                Toast.makeText(this, "Нет доступа к выбранной папке", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode == PICK_FILE_FROM_STORAGE) {
             try {
-                Intent view = new Intent(Intent.ACTION_VIEW);
-                view.setDataAndType(data.getData(), getContentResolver().getType(data.getData()));
-                view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                startActivity(Intent.createChooser(view, "Открыть файл"));
+                String mime = getContentResolver().getType(data.getData());
+                openDocument(data.getData(), mime == null ? "*/*" : mime);
             } catch (Exception ignored) {
                 Toast.makeText(this, "Файл выбран. Для управления файлами назначь файловый менеджер.", Toast.LENGTH_LONG).show();
             }
@@ -638,7 +948,7 @@ public final class MainActivity extends Activity {
             // Some document providers grant session-only access; no crash.
         }
         prefs.edit().putString("cover_" + slot, uri.toString()).apply();
-        renderHome();
+        showTab(activeTab);
     }
 
     private void openHomeSettings() {
