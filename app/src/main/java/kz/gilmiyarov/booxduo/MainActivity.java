@@ -306,6 +306,66 @@ public final class MainActivity extends Activity {
         return null;
     }
 
+    // The three family slots share ONE reading app. 'target_2' remains the
+    // existing file manager preference from v0.10, and is never reused here.
+    private AppEntry familyReader() {
+        String saved = prefs.getString("family_reader", null);
+        if (saved != null) {
+            ComponentName selected = ComponentName.unflattenFromString(saved);
+            if (selected != null) {
+                for (AppEntry e : apps) if (e.component.equals(selected)) return e;
+            }
+        }
+        AppEntry best = null;
+        int bestScore = 0;
+        for (AppEntry candidate : apps) {
+            String value = (candidate.label + " " + candidate.component.getPackageName())
+                    .toLowerCase(Locale.ROOT);
+            int score = 0;
+            if (value.contains("alreaderx pro")) score = 100;
+            else if (value.contains("alreaderx")) score = 90;
+            else if (value.contains("alreader")) score = 70;
+            if (score > bestScore) {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+        if (best != null) {
+            prefs.edit().putString("family_reader", best.component.flattenToString()).apply();
+        }
+        return best;
+    }
+
+    private void showFamilyReaderPicker() {
+        if (apps.isEmpty()) {
+            Toast.makeText(this, "Установленные приложения не найдены", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // AlReaderX is first in the list; every other installed app remains
+        // selectable in case the firmware uses a custom icon/label.
+        ArrayList<AppEntry> choices = new ArrayList<>(apps);
+        Collections.sort(choices, (a,b) -> {
+            boolean aa = (a.label + a.component.getPackageName())
+                    .toLowerCase(Locale.ROOT).contains("alreader");
+            boolean bb = (b.label + b.component.getPackageName())
+                    .toLowerCase(Locale.ROOT).contains("alreader");
+            if (aa != bb) return aa ? -1 : 1;
+            return a.label.compareToIgnoreCase(b.label);
+        });
+        String[] labels = new String[choices.size()];
+        for (int i=0;i<choices.size();i++) labels[i] = choices.get(i).label;
+        new AlertDialog.Builder(this)
+            .setTitle("Одна читалка для всех")
+            .setMessage("Это приложение будет открывать книги Руслана, Анны и Амелии")
+            .setItems(labels, (d,which)->{
+                prefs.edit().putString("family_reader",
+                        choices.get(which).component.flattenToString()).apply();
+                showTab(activeTab);
+            })
+            .setNegativeButton("Отмена", null)
+            .show();
+    }
+
     private void launchApp(AppEntry entry) {
         try {
             Intent intent = new Intent(Intent.ACTION_MAIN);
@@ -322,9 +382,9 @@ public final class MainActivity extends Activity {
     // A BOOX metadata link is NOT an Android file launch. Do not confuse a
     // selected title with ReadEra's "last opened" history.
     private void openReader(int slot) {
-        AppEntry reader = selectedApp(slot);
+        AppEntry reader = familyReader();
         if (reader == null) {
-            showAppPicker(slot, null);
+            showFamilyReaderPicker();
             return;
         }
         Uri file = savedBook(slot);
@@ -376,7 +436,7 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this)
             .setTitle("Нужно выбрать файл книги")
             .setMessage("Для «" + name + "» пока не привязан доступный файл. "
-                + "Если просто запустить ReadEra, она может открыть другую книгу. "
+                + "Если просто запустить читалку, она может открыть последнюю книгу другого человека. "
                 + "Выбери EPUB, FB2 или PDF именно этой книги.")
             .setPositiveButton("Выбрать файл", (d,w) -> pickBook(slot))
             .setNegativeButton("Отмена", null)
@@ -519,9 +579,10 @@ public final class MainActivity extends Activity {
         String date = new SimpleDateFormat("EEEE, d MMMM", new Locale("ru", "RU")).format(new Date());
         body.addView(text(date, 12, MUTED, false), margins(-1, -2, 0, 0, 0, 13));
 
-        // Both cards share exactly the same frame height and text coordinates.
-        body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 208, 0, 0, 0, 12));
-        body.addView(readerCard(1, "АННЫ", "", ""), margins(-1, 208, 0, 0, 0, 8));
+        // The three cards share the same section-cover and metadata layout.
+        body.addView(readerCard(0, "РУСЛАНА", "", ""), margins(-1, 182, 0, 0, 0, 9));
+        body.addView(readerCard(1, "АННЫ", "", ""), margins(-1, 182, 0, 0, 0, 9));
+        body.addView(readerCard(2, "АМЕЛИИ", "", ""), margins(-1, 182, 0, 0, 0, 8));
 
         TextView hint = text("«Сменить» выбирает текущую книгу · удержание карточки тоже", 11, MUTED, false);
         hint.setGravity(Gravity.CENTER);
@@ -713,7 +774,7 @@ public final class MainActivity extends Activity {
                     + new SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
                     .format(new Date(book.lastAccess));
         }
-        String[] options = {"Открыть файл книги", "На карточку Руслана", "На карточку Анны"};
+        String[] options = {"Открыть файл книги", "На карточку Руслана", "На карточку Анны", "На карточку Амелии"};
         new AlertDialog.Builder(this)
             .setTitle("Книга из библиотеки")
             .setMessage(details)
@@ -1171,7 +1232,15 @@ public final class MainActivity extends Activity {
         sectionButton(body, "Проверить библиотеку BOOX (только чтение)", () -> refreshBooxLibrary(true));
         body.addView(text("Если библиотека доступна, привяжи книгу Анны к её записи: тогда прогресс и последнее открытие будут обновляться при возвращении в оболочку.", 12, MUTED, false),
                 margins(-1, -2, 0, 0, 0, 8));
-        for (int slot = 0; slot < 2; slot++) addSettingsForSlot(body, slot);
+        AppEntry shared = familyReader();
+        body.addView(text("ОБЩАЯ ЧИТАЛКА", 13, INK, true),
+                margins(-1, -2, 0, 9, 0, 5));
+        body.addView(text(shared == null ? "Не выбрана" : shared.label, 12, MUTED, false),
+                margins(-1, -2, 0, 0, 0, 6));
+        sectionButton(body, "Выбрать приложение для всей семьи", this::showFamilyReaderPicker);
+        body.addView(text("В каждом слоте — свой файл книги. Настройки AlReaderX общие, позиции чтения зависят от самой читалки.",
+                12, MUTED, false), margins(-1, -2, 0, 0, 0, 6));
+        for (int slot = 0; slot < 3; slot++) addSettingsForSlot(body, slot);
         body.addView(text("ФАЙЛОВЫЙ МЕНЕДЖЕР", 13, INK, true),
                 margins(-1, -2, 0, 12, 0, 6));
         AppEntry fileManager = selectedApp(2);
@@ -1191,7 +1260,7 @@ public final class MainActivity extends Activity {
                             startActivity(intent);
                         } catch (Exception e) { appDetails(getPackageName()); }
                     }).show());
-        body.addView(text("BOOX DUO 0.10 · Android 11 · Офлайн", 11, MUTED, false),
+        body.addView(text("BOOX DUO 0.11 · Android 11 · Офлайн", 11, MUTED, false),
                 margins(-1, -2, 0, 8, 0, 5));
         showPage(scroll, 3);
     }
@@ -1243,7 +1312,8 @@ public final class MainActivity extends Activity {
         shelf.setClipToOutline(true);
 
         ImageView art = new ImageView(this);
-        art.setImageResource(dark ? R.drawable.art_ruslan : R.drawable.art_anna);
+        art.setImageResource(slot == 0 ? R.drawable.art_ruslan
+                : slot == 1 ? R.drawable.art_anna : R.drawable.art_amelia);
         art.setScaleType(ImageView.ScaleType.FIT_XY);
         shelf.addView(art, new FrameLayout.LayoutParams(-1, -1));
 
@@ -1294,8 +1364,8 @@ public final class MainActivity extends Activity {
         title.setEllipsize(TextUtils.TruncateAt.END);
         info.addView(title, margins(-1, -2, 0, 0, 0, 5));
 
-        AppEntry reader = selectedApp(slot);
-        TextView readerName = text(reader == null ? "Читалка не выбрана" : reader.label,
+        AppEntry reader = familyReader();
+        TextView readerName = text(reader == null ? "Укажите общую читалку" : reader.label,
                 11, MUTED, false);
         readerName.setMaxLines(1);
         readerName.setEllipsize(TextUtils.TruncateAt.END);
@@ -1324,7 +1394,7 @@ public final class MainActivity extends Activity {
             progressLine.addView(new View(this), new LinearLayout.LayoutParams(0, dp(4), 100 - percent));
             info.addView(progressLine, margins(-1, 4, 0, 0, 0, 6));
         } else {
-            String message = slot == 0 ? "ReadEra: прогресс недоступен" : "Нет достоверного прогресса";
+            String message = "Нет достоверных данных о прогрессе";
             info.addView(text(message, 11, MUTED, false), margins(-1, -2, 0, 0, 0, 8));
         }
 
@@ -1391,9 +1461,9 @@ public final class MainActivity extends Activity {
         LinearLayout content = vertical();
         content.setPadding(dp(18), dp(8), dp(18), dp(8));
         scroll.addView(content);
-        content.addView(text("Названия и обложки можно настроить вручную или выбрать сам файл книги для извлечения обложки.", 13, MUTED, false),
+        content.addView(text("Три отдельные книги открываются в одной читалке. Изменить приложение можно в разделе настроек.", 13, MUTED, false),
                 margins(-1, -2, 0, 0, 0, 12));
-        for (int slot = 0; slot < 2; slot++) addSettingsForSlot(content, slot);
+        for (int slot = 0; slot < 3; slot++) addSettingsForSlot(content, slot);
         AppEntry manager = selectedApp(2);
         content.addView(text("ФАЙЛОВЫЙ МЕНЕДЖЕР", 14, INK, true), margins(-1, -2, 0, 14, 0, 5));
         content.addView(text(manager == null ? "Не найден — откроется системный выбор файла" : manager.label, 12, MUTED, false),
@@ -1417,17 +1487,18 @@ public final class MainActivity extends Activity {
     }
 
     private void addSettingsForSlot(LinearLayout parent, int slot) {
-        String name = slot == 0 ? "Руслан / ReadEra" : "Анна / AlReaderX Pro";
+        String name = slot == 0 ? "Руслан" : slot == 1 ? "Анна" : "Амелия";
         parent.addView(text(name, 17, INK, true), margins(-1, -2, 0, 13, 0, 5));
-        AppEntry current = selectedApp(slot);
-        TextView currentApp = text("Приложение: " + (current == null ? "не выбрано" : current.label), 12, MUTED, false);
+        AppEntry current = familyReader();
+        TextView currentApp = text("Общая читалка: " + (current == null ? "не выбрана" : current.label), 12, MUTED, false);
         parent.addView(currentApp, margins(-1, -2, 0, 0, 0, 5));
         EditText editTitle = new EditText(this);
         editTitle.setTextSize(14);
         editTitle.setTextColor(INK);
         editTitle.setSingleLine(true);
         editTitle.setHint("Название книги (необязательно)");
-        editTitle.setText(prefs.getString("title_" + slot, slot == 0 ? "Моя книга" : "Книга Анны"));
+        editTitle.setText(prefs.getString("title_" + slot,
+                slot == 0 ? "Моя книга" : slot == 1 ? "Книга Анны" : "Книга Амелии"));
         editTitle.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
@@ -1436,10 +1507,8 @@ public final class MainActivity extends Activity {
             @Override public void afterTextChanged(Editable e) { }
         });
         parent.addView(editTitle, margins(-1, 44, 0, 0, 0, 6));
-        parent.addView(simpleAction("Выбрать приложение", () -> showAppPicker(slot, () -> {
-            AppEntry picked = selectedApp(slot);
-            currentApp.setText("Приложение: " + (picked == null ? "не выбрано" : picked.label));
-        })), margins(-1, 43, 0, 0, 0, 5));
+        parent.addView(simpleAction("Выбрать книгу из библиотеки BOOX",
+                () -> showBooxBookPicker(slot)), margins(-1, 43, 0, 0, 0, 5));
         parent.addView(simpleAction("Закрепить файл книги (EPUB, FB2, PDF)", () -> pickBook(slot)),
                 margins(-1, 43, 0, 0, 0, 5));
         TextView direct = text("Открывать закреплённую книгу сразу: "
@@ -1452,8 +1521,7 @@ public final class MainActivity extends Activity {
             direct.setText("Открывать закреплённую книгу сразу: " + (next ? "ДА" : "НЕТ"));
         });
         parent.addView(direct, margins(-1, 43, 0, 0, 0, 5));
-        parent.addView(simpleAction("Привязать книгу из библиотеки BOOX", () -> showBooxBookPicker(slot)),
-                margins(-1, 43, 0, 0, 0, 5));
+
         BooxLibrary.Book nativeBook = linkedBooxBook(slot);
         parent.addView(text(nativeBook != null ? "Источник прогресса: BOOX · " + nativeBook.name
                         : "Источник прогресса: вручную / не подключён",
@@ -1665,11 +1733,11 @@ public final class MainActivity extends Activity {
             }
             return;
         }
-        if (requestCode == PICK_BOOK_BASE || requestCode == PICK_BOOK_BASE + 1) {
+        if (requestCode >= PICK_BOOK_BASE && requestCode <= PICK_BOOK_BASE + 2) {
             onBookSelected(requestCode - PICK_BOOK_BASE, data);
             return;
         }
-        if (requestCode != PICK_COVER_BASE && requestCode != PICK_COVER_BASE + 1) return;
+        if (requestCode < PICK_COVER_BASE || requestCode > PICK_COVER_BASE + 2) return;
         int slot = requestCode - PICK_COVER_BASE;
         Uri uri = data.getData();
         try {
