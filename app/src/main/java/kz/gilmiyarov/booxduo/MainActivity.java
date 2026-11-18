@@ -169,7 +169,8 @@ public final class MainActivity extends Activity {
                 if (isFinishing() || isDestroyed()) return;
                 if (showMessage) Toast.makeText(this,
                         "Библиотека BOOX: " + result.details, Toast.LENGTH_LONG).show();
-                if (activeTab == 0 || activeTab == 3) showTab(activeTab);
+                if (activeTab == 0 || activeTab == 3 || activeTab == 4) showTab(activeTab);
+                promptForReturnedReadingSession();
                 if (pendingBookPicker >= 0) {
                     int slot = pendingBookPicker;
                     pendingBookPicker = -1;
@@ -404,6 +405,113 @@ public final class MainActivity extends Activity {
 
     // A BOOX metadata link is NOT an Android file launch. Do not confuse a
     // selected title with ReadEra's "last opened" history.
+    // A session measures the interval between opening a selected file and
+    // returning to BOOX Duo. The user must confirm/edit that interval because
+    // Android cannot prove all of it was spent actively reading.
+    private void beginReadingSession(int slot) {
+        BooxLibrary.Book b=linkedBooxBook(slot);
+        int first=(b!=null && b.hasUsableProgress() && !b.normalizedProgress())
+                ?b.currentPage:-1;
+        String key=statsBookKey(slot);
+        String title=statsBookName(slot);
+        prefs.edit()
+            .putLong("stats_pending_start",System.currentTimeMillis())
+            .putInt("stats_pending_slot",slot)
+            .putString("stats_pending_key",key)
+            .putString("stats_pending_title",ReadingStats.safeTitle(title))
+            .putInt("stats_pending_first_page",first)
+            .apply();
+    }
+
+    private void clearPendingReadingSession() {
+        prefs.edit().remove("stats_pending_start").remove("stats_pending_slot")
+                .remove("stats_pending_key").remove("stats_pending_title")
+                .remove("stats_pending_first_page").apply();
+    }
+
+    private void promptForReturnedReadingSession() {
+        if(statsConfirmOpen || readingStats==null)return;
+        long start=prefs.getLong("stats_pending_start",0);
+        if(start<=0)return;
+        long now=System.currentTimeMillis();
+        long diff=now-start;
+        if(diff<15000L || diff>7L*24*60*60*1000) {
+            clearPendingReadingSession();
+            return;
+        }
+        int slot=prefs.getInt("stats_pending_slot",-1);
+        if(slot<0 || slot>2){clearPendingReadingSession();return;}
+        String key=prefs.getString("stats_pending_key","");
+        String title=prefs.getString("stats_pending_title","Книга");
+        int before=prefs.getInt("stats_pending_first_page",-1);
+        int delta=0;
+        BooxLibrary.Book after=linkedBooxBook(slot);
+        if(after!=null && after.hasUsableProgress() && !after.normalizedProgress()
+                && key.equals(statsBookKey(slot)) && before>=0) {
+            delta=Math.max(0,Math.min(10000,after.currentPage-before));
+        }
+        // Cap the *suggestion*, not the user's real correction.
+        int elapsed=(int)Math.max(1,Math.min(240,Math.round(diff/60000f)));
+        clearPendingReadingSession();
+        showRecordReadingDialog(slot,key,title,start,now,elapsed,delta,true);
+    }
+
+    private void showRecordReadingDialog(int slot,String bookKey,String title,
+            long start,long ended,int suggestedMinutes,int suggestedPages,boolean fromReader){
+        statsConfirmOpen=true;
+        LinearLayout fields=vertical();
+        fields.setPadding(dp(22),dp(5),dp(22),dp(4));
+        String description=fromReader
+            ?"Время между запуском книги и возвращением в оболочку — лишь ориентир. "
+                    +"Если отвлекался или оставлял читалку открытой, исправь минуты. "
+                    +"Страницы можно взять из BOOX или указать вручную."
+            :"Добавление собственной записи к книге и выбранному дню.";
+        fields.addView(text(description,12,MUTED,false),
+                margins(-1,-2,0,0,0,10));
+        fields.addView(text("Минут чтения",12,INK,true),margins(-1,-2,0,0,0,1));
+        EditText minutes=new EditText(this);
+        minutes.setSingleLine(true);
+        minutes.setTextSize(17);
+        minutes.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        minutes.setText(String.valueOf(suggestedMinutes));
+        fields.addView(minutes,margins(-1,44,0,0,0,8));
+        fields.addView(text("Прочитано страниц за сессию",12,INK,true),
+                margins(-1,-2,0,0,0,1));
+        EditText pages=new EditText(this);
+        pages.setSingleLine(true);
+        pages.setTextSize(17);
+        pages.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        pages.setText(String.valueOf(Math.max(0,suggestedPages)));
+        fields.addView(pages,margins(-1,44,0,0,0,5));
+
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle(READERS[slot]+" · "+title)
+            .setView(fields)
+            .setPositiveButton("Записать",null)
+            .setNegativeButton("Не учитывать",(d,w)->{})
+            .create();
+        dialog.setOnDismissListener(d->statsConfirmOpen=false);
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(v->{
+                try {
+                    int minutesValue=Integer.parseInt(minutes.getText().toString().trim());
+                    int pagesValue=Integer.parseInt(pages.getText().toString().trim());
+                    if(minutesValue<1 || minutesValue>720 || pagesValue<0 || pagesValue>20000){
+                        Toast.makeText(this,"Минуты: от 1 до 720; страницы: от 0 до 20000",
+                                Toast.LENGTH_LONG).show();return;
+                    }
+                    readingStats.addSession(slot,bookKey,title,start,ended,minutesValue,pagesValue);
+                    dialog.dismiss();
+                    if(activeTab==3)renderStatsTab();
+                    Toast.makeText(this,"Сессия чтения сохранена",Toast.LENGTH_SHORT).show();
+                } catch(NumberFormatException e){
+                    Toast.makeText(this,"Укажи количество минут и страниц цифрами",
+                            Toast.LENGTH_LONG).show();
+                }
+            }));
+        dialog.show();
+    }
+
     private void openReader(int slot) {
         AppEntry reader = familyReader();
         if (reader == null) {
@@ -474,8 +582,10 @@ public final class MainActivity extends Activity {
         view.setClipData(ClipData.newUri(getContentResolver(), filename, uri));
         view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
+            beginReadingSession(slot);
             startActivity(view);
         } catch (ActivityNotFoundException | SecurityException e) {
+            clearPendingReadingSession();
             // Never silently launch the reader's last book: it might be a
             // different title from the one displayed on the card.
             new AlertDialog.Builder(this)
