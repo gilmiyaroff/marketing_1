@@ -85,6 +85,7 @@ public final class MainActivity extends Activity {
     private SharedPreferences prefs;
     private BooxLibrary.Result booxLibrary;
     private boolean booxLoading = false;
+    private int pendingBookPicker = -1;
 
     private static final class AppEntry {
         final String label;
@@ -140,32 +141,58 @@ public final class MainActivity extends Activity {
                 if (showMessage) Toast.makeText(this,
                         "Библиотека BOOX: " + result.details, Toast.LENGTH_LONG).show();
                 if (activeTab == 0 || activeTab == 3) showTab(activeTab);
+                if (pendingBookPicker >= 0) {
+                    int slot = pendingBookPicker;
+                    pendingBookPicker = -1;
+                    showBooxBookPicker(slot);
+                }
             });
         }, "boox-library-read-only").start();
     }
 
+    private static String bookStem(String value) {
+        if (value == null) return "";
+        String text = value.trim().replace('\\', '/');
+        text = text.substring(text.lastIndexOf('/') + 1);
+        text = text.replaceFirst("(?i)\\.(fb2\\.zip|epub|fb2|pdf|mobi|azw3|txt|djvu|docx?)$", "");
+        return text.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+    }
+
     private BooxLibrary.Book linkedBooxBook(int slot) {
         if (booxLibrary == null || !"ok".equals(booxLibrary.status)) return null;
+        // A link made in v0.5/v0.6 remains the first and most reliable choice.
         BooxLibrary.Book chosen = BooxLibrary.match(booxLibrary,
                 prefs.getString("boox_link_" + slot, null));
         if (chosen != null) return chosen;
-        // Exact filename match is only safe when one unique book has that name.
-        String filename = prefs.getString("book_name_" + slot, "");
-        if (filename.isEmpty()) return null;
-        BooxLibrary.Book found = null;
-        for (BooxLibrary.Book book : booxLibrary.books) {
-            String p = book.path.replace('\\', '/');
-            if (!filename.equalsIgnoreCase(p.substring(p.lastIndexOf('/')+1))) continue;
-            if (found != null) return null; // ambiguous; user must choose manually
-            found = book;
+
+        // Auto-link only by an exact, unique filename or previously saved title.
+        // We never use the latest *other person's* book as a guess.
+        String preferredFile = bookStem(prefs.getString("book_name_" + slot, ""));
+        String preferredTitle = bookStem(prefs.getString("title_" + slot, ""));
+        if (preferredTitle.equals("моя книга") || preferredTitle.equals("книга анны")) {
+            preferredTitle = "";
         }
-        return found;
+        if (preferredFile.isEmpty() && preferredTitle.isEmpty()) return null;
+        BooxLibrary.Book matched = null;
+        for (BooxLibrary.Book book : booxLibrary.books) {
+            String candidate = bookStem(!book.path.isEmpty() ? book.path : book.name);
+            String title = bookStem(book.name);
+            boolean exactFile = !preferredFile.isEmpty() &&
+                    (preferredFile.equals(candidate) || preferredFile.equals(title));
+            boolean exactTitle = !preferredTitle.isEmpty() &&
+                    (preferredTitle.equals(title) || preferredTitle.equals(candidate));
+            if (!exactFile && !exactTitle) continue;
+            if (matched != null && !matched.key().equals(book.key())) return null;
+            matched = book;
+        }
+        return matched;
     }
 
     private void showBooxBookPicker(int slot) {
         if (booxLibrary == null) {
-            Toast.makeText(this, "Проверяю библиотеку BOOX", Toast.LENGTH_SHORT).show();
-            refreshBooxLibrary(true);
+            pendingBookPicker = slot;
+            Toast.makeText(this, "Загружаю последние книги BOOX…", Toast.LENGTH_SHORT).show();
+            refreshBooxLibrary(false);
             return;
         }
         if (!"ok".equals(booxLibrary.status)) {
