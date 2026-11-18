@@ -613,6 +613,223 @@ public final class MainActivity extends Activity {
         showPage(scroll, 0);
     }
 
+    private String statsBookKey(int slot) {
+        String key=prefs.getString("boox_link_"+slot,null);
+        if(key==null || key.trim().isEmpty())
+            key=prefs.getString("bound_book_key_"+slot,null);
+        return ReadingStats.safeKey(key,statsBookName(slot));
+    }
+
+    private String statsBookName(int slot) {
+        BooxLibrary.Book book=linkedBooxBook(slot);
+        if(book!=null && book.name!=null && !book.name.trim().isEmpty()) return book.name;
+        String title=prefs.getString("title_"+slot,"");
+        if(!title.trim().isEmpty() && !title.equals("Моя книга") &&
+                !title.equals("Книга Анны") && !title.equals("Книга Амелии")) return title;
+        return prefs.getString("book_name_"+slot,"");
+    }
+
+    private String formatReadingMinutes(int total) {
+        if(total<60) return total+" мин";
+        int h=total/60,m=total%60;
+        return m==0?h+" ч":h+" ч "+m+" мин";
+    }
+
+    private void addStatSummaryCell(LinearLayout line,String value,String label,boolean right) {
+        LinearLayout tile=vertical();
+        tile.setPadding(dp(11),dp(9),dp(11),dp(9));
+        tile.setBackground(panel(PAPER,EDGE,6));
+        tile.addView(text(value,19,INK,true),margins(-1,-2,0,0,0,4));
+        tile.addView(text(label,11,MUTED,false));
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(73),1);
+        if(right)p.leftMargin=dp(7);
+        line.addView(tile,p);
+    }
+
+    private void renderStatsTab() {
+        if(readingStats==null) return;
+        LinearLayout[] output=new LinearLayout[1];
+        ScrollView scroll=newSection(output);
+        LinearLayout body=output[0];
+        sectionHeading(body,"Статистика чтения","Личные результаты семьи");
+
+        LinearLayout people=horizontal();
+        for(int i=0;i<3;i++){
+            final int person=i;
+            TextView choice=text(READERS[i],13,i==statsPerson?PAPER:INK,i==statsPerson);
+            choice.setGravity(Gravity.CENTER);
+            choice.setBackground(panel(i==statsPerson?INK:WASH,EDGE,7));
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(42),1);
+            if(i>0)p.leftMargin=dp(6);
+            people.addView(choice,p);
+            choice.setOnClickListener(v->{
+                statsPerson=person;statsMonthShift=0;renderStatsTab();
+            });
+        }
+        body.addView(people,margins(-1,-2,0,0,0,13));
+
+        ReadingStats.Summary totals=readingStats.summary(statsPerson);
+        LinearLayout grid1=horizontal();
+        addStatSummaryCell(grid1,formatReadingMinutes(totals.minutes),"Подтверждено чтения",false);
+        addStatSummaryCell(grid1,String.valueOf(totals.pages),"Пройдено страниц",true);
+        body.addView(grid1,margins(-1,-2,0,0,0,7));
+
+        LinearLayout grid2=horizontal();
+        addStatSummaryCell(grid2,"≈"+totals.wordsEstimate(),"Слов, оценка",false);
+        addStatSummaryCell(grid2,String.valueOf(totals.completed),"Книг завершено",true);
+        body.addView(grid2,margins(-1,-2,0,0,0,9));
+
+        body.addView(text("Книг с записями: "+totals.started+
+                " · История собирается после установки статистики.",11,MUTED,false),
+                margins(-1,-2,0,0,0,10));
+
+        LinearLayout calendarTop=horizontal();
+        calendarTop.setGravity(Gravity.CENTER_VERTICAL);
+        calendarTop.addView(text("КАЛЕНДАРЬ ЧТЕНИЯ",13,INK,true),
+                new LinearLayout.LayoutParams(0,-2,1));
+        body.addView(calendarTop,margins(-1,-2,0,8,0,8));
+
+        Calendar month=Calendar.getInstance();
+        month.set(Calendar.DAY_OF_MONTH,1);
+        month.add(Calendar.MONTH,statsMonthShift);
+        final int year=month.get(Calendar.YEAR),number=month.get(Calendar.MONTH);
+        LinearLayout switcher=horizontal();
+        switcher.setGravity(Gravity.CENTER_VERTICAL);
+        TextView prev=text("‹",25,INK,true);
+        prev.setGravity(Gravity.CENTER);
+        switcher.addView(prev,margins(45,39,0,0,5,0));
+        prev.setOnClickListener(v->{statsMonthShift--;renderStatsTab();});
+        String readableMonth=new SimpleDateFormat("LLLL yyyy",new Locale("ru","RU"))
+                .format(month.getTime());
+        TextView monthName=text(readableMonth,15,INK,true);
+        monthName.setGravity(Gravity.CENTER);
+        switcher.addView(monthName,new LinearLayout.LayoutParams(0,-2,1));
+        TextView next=text("›",25,statsMonthShift<0?INK:EDGE,true);
+        next.setGravity(Gravity.CENTER);
+        switcher.addView(next,margins(45,39,5,0,0,0));
+        next.setOnClickListener(v->{
+            if(statsMonthShift<0){statsMonthShift++;renderStatsTab();}
+        });
+        body.addView(switcher,margins(-1,-2,0,0,0,7));
+
+        String[] weekdays={"Пн","Вт","Ср","Чт","Пт","Сб","Вс"};
+        LinearLayout daysOfWeek=horizontal();
+        for(String day:weekdays){
+            TextView label=text(day,10,MUTED,true);
+            label.setGravity(Gravity.CENTER);
+            daysOfWeek.addView(label,new LinearLayout.LayoutParams(0,dp(22),1));
+        }
+        body.addView(daysOfWeek);
+        Map<Integer,Integer> readings=readingStats.monthDays(statsPerson,year,number+1);
+        int maxDay=month.getActualMaximum(Calendar.DAY_OF_MONTH);
+        int offset=(month.get(Calendar.DAY_OF_WEEK)+5)%7;
+        int cells=((offset+maxDay+6)/7)*7;
+        for(int i=0;i<cells;i+=7){
+            LinearLayout week=horizontal();
+            for(int col=0;col<7;col++){
+                int day=i+col-offset+1;
+                if(day<1 || day>maxDay) {
+                    week.addView(new View(this),new LinearLayout.LayoutParams(0,dp(39),1));
+                    continue;
+                }
+                int minutes=readings.containsKey(day)?readings.get(day):0;
+                int fill=minutes>=90?INK:minutes>=45?0xff777777:
+                        minutes>=15?0xffb3b3b3:minutes>0?0xffdddddd:PAPER;
+                TextView cell=text(String.valueOf(day),12,minutes>=45?PAPER:INK,minutes>0);
+                cell.setGravity(Gravity.CENTER);
+                cell.setBackground(panel(fill,EDGE,4));
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(39),1);
+                p.setMargins(dp(2),dp(2),dp(2),dp(2));
+                week.addView(cell,p);
+                final int dayNumber=day;
+                cell.setOnClickListener(v->{
+                    String date=String.format(Locale.ROOT,"%04d-%02d-%02d",year,number+1,dayNumber);
+                    new AlertDialog.Builder(this).setTitle(date)
+                        .setMessage(minutes==0?"За этот день чтение не записано."
+                                :"Чтение: "+formatReadingMinutes(minutes))
+                        .setPositiveButton("Добавить запись",(d,w)->{
+                            Calendar selected=(Calendar)month.clone();
+                            selected.set(Calendar.DAY_OF_MONTH,dayNumber);
+                            addReadingManually(selected.getTimeInMillis());
+                        })
+                        .setNegativeButton("Закрыть",null).show();
+                });
+            }
+            body.addView(week,margins(-1,-2,0,0,0,1));
+        }
+        body.addView(text("Светлее — меньше времени, темнее — больше. "
+                +"День можно нажать, чтобы добавить запись.",10,MUTED,false),
+                margins(-1,-2,0,8,0,10));
+
+        sectionButton(body,"+ Добавить время и страницы вручную",
+                ()->addReadingManually(System.currentTimeMillis()));
+
+        LinearLayout completedHeading=horizontal();
+        completedHeading.setGravity(Gravity.CENTER_VERTICAL);
+        completedHeading.addView(text("ПРОЧИТАННЫЕ КНИГИ",13,INK,true),
+                new LinearLayout.LayoutParams(0,-2,1));
+        body.addView(completedHeading,margins(-1,-2,0,13,0,8));
+        String activeTitle=statsBookName(statsPerson);
+        if(activeTitle!=null && !activeTitle.trim().isEmpty()){
+            sectionButton(body,"Отметить текущую книгу прочитанной",()->{
+                readingStats.markFinished(statsPerson,statsBookKey(statsPerson),activeTitle);
+                renderStatsTab();
+            });
+        }
+        List<ReadingStats.Finished> done=readingStats.finished(statsPerson);
+        if(done.isEmpty())body.addView(text("Пока нет отмеченных прочитанных книг",
+                12,MUTED,false),margins(-1,-2,0,0,0,7));
+        for(ReadingStats.Finished item:done){
+            TextView name=text("✓  "+item.title,12,INK,false);
+            name.setPadding(dp(12),dp(12),dp(12),dp(12));
+            name.setBackground(panel(WASH,EDGE,5));
+            name.setOnClickListener(v->new AlertDialog.Builder(this)
+                .setTitle("Отменить отметку?")
+                .setMessage(item.title)
+                .setPositiveButton("Убрать",(d,w)->{
+                    readingStats.unmarkFinished(statsPerson,item.bookKey);renderStatsTab();
+                }).setNegativeButton("Оставить",null).show());
+            body.addView(name,margins(-1,-2,0,0,0,6));
+        }
+
+        body.addView(text("ПОСЛЕДНИЕ СЕССИИ",13,INK,true),margins(-1,-2,0,14,0,8));
+        List<ReadingStats.Session> sessions=readingStats.recent(statsPerson,15);
+        if(sessions.isEmpty())body.addView(text("Записей пока нет. После чтения через карточку "
+                +"оболочка предложит подтвердить время и страницы.",12,MUTED,false));
+        for(ReadingStats.Session item:sessions){
+            String label=item.day+" · "+formatReadingMinutes(item.minutes)+
+                    (item.pages>0?" · "+item.pages+" стр.":"")+"\n"+item.title;
+            TextView row=text(label,12,INK,false);
+            row.setPadding(dp(12),dp(9),dp(12),dp(9));
+            row.setBackground(panel(PAPER,EDGE,5));
+            row.setOnLongClickListener(v->{
+                new AlertDialog.Builder(this).setTitle("Удалить запись?")
+                    .setMessage(label)
+                    .setPositiveButton("Удалить",(d,w)->{
+                        readingStats.deleteSession(item.id);renderStatsTab();
+                    }).setNegativeButton("Отмена",null).show();
+                return true;
+            });
+            body.addView(row,margins(-1,-2,0,0,0,5));
+        }
+        body.addView(text("Статистика хранится только на устройстве. "
+                +"Время подтверждается после сессии; страницы берутся из BOOX при доступности "
+                +"или вводятся вручную. Количество слов ≈ страницы × 250 — это оценка, "
+                +"а не точный подсчёт текста.",10,MUTED,false),
+                margins(-1,-2,0,14,0,12));
+        showPage(scroll,3);
+    }
+
+    private void addReadingManually(long timestamp){
+        String title=statsBookName(statsPerson);
+        if(title==null || title.trim().isEmpty()){
+            Toast.makeText(this,"Сначала выбери книгу для этой полки",Toast.LENGTH_LONG).show();
+            return;
+        }
+        showRecordReadingDialog(statsPerson,statsBookKey(statsPerson),title,timestamp,
+                timestamp,0,0,false);
+    }
+
     // Horizontal, continuously swipeable shelf of all titles exposed by BOOX.
     // The first version intentionally avoids third-party libraries and animations.
     private void addAllBooksCarousel(LinearLayout body) {
