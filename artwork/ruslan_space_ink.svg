@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="480" viewBox="0 0 1000 480">
+<!-- Transparent E-Ink vector art; the Android card supplies the black background. -->
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<g stroke="#FFFFFF" opacity=".86" stroke-width="1.5">
+<path d="M38 60h5m-2-2v5M115 33h7m-3.5-3.5v7M252 72h6m-3-3v6M340 38h5m-2-2v5M515 54h7m-3.5-3.5v7M687 64h6m-3-3v6M838 44h6m-3-3v6M942 100h7m-3.5-3.5v7M95 153h5m-2.5-2.5v5M903 208h6m-3-3v6"/>
+<circle cx="77" cy="97" r="2"/><circle cx="177" cy="49" r="1.8"/><circle cx="226" cy="135" r="1.7"/><circle cx="301" cy="103" r="2"/><circle cx="426" cy="46" r="1.4"/><circle cx="557" cy="119" r="1.8"/><circle cx="614" cy="43" r="1.5"/><circle cx="762" cy="105" r="2"/><circle cx="883" cy="143" r="1.5"/><circle cx="964" cy="39" r="1.5"/><circle cx="957" cy="178" r="1.9"/>
+</g>
+<g stroke="#919191" opacity=".7" stroke-width="2">
+<path d="M-18 160C138 21 321-13 466 77"/><path d="M576 2C745 33 890 93 1024 216"/>
+<path d="M675 20c88 10 170 45 230 102"/>
+</g>
+<g stroke="#FFFFFF" stroke-width="3" opacity=".95">
+<circle cx="817" cy="117" r="67"/>
+<path d="M779 61c-19 30-23 70-2 103 12 20 33 33 56 39"/>
+<path d="M754 140c34 17 73 20 113 5M782 107c20-8 42-13 67-12"/>
+</g>
+<g stroke="#D0D0D0" stroke-width="2">
+<path d="M698 138c77 57 155 51 236-1M684 145c86 78 175 69 271-4"/>
+</g>
+<g stroke="#6C6C6C" opacity=".95" stroke-width="3">
+<path d="M0 425L75 370 117 392 212 314 303 390 379 354 465 424 559 376 654 419 733 347 813 413 913 363 1000 419"/>
+<path d="M0 458L124 401 214 431 319 377 418 444 548 407 624 450 772 396 878 450 1000 398"/>
+</g>
+<g stroke="#FFFFFF" stroke-width="2.5">
+<path d="M0 462L106 399 184 425 278 352 378 447 496 401 610 453 729 386 824 450 954 403 1000 418"/>
+<path d="M217 424l61-72 40 58m412 13l-1-37 31 44m-663 15l9-46 39 34"/>
+</g>
+<g stroke="#FFFFFF" stroke-width="2.4" opacity=".85">
+<path d="M70 395l106-22 88 10 0 37-88 15-106-12z"/><path d="M70 395l112 9 82-21M70 423l113 10 81-13"/>
+<path d="M92 448l106-17 85 8v28l-88 13-103-9z"/><path d="M92 448l103 10 88-19M92 471l103 9 88-13"/>
+</g>
+<g stroke="#BFBFBF" stroke-width="2">
+<path d="M894 333l24 13 23-13 25 13-25 13-23-13z"/>
+<path d="M918 347v31m-24-45v27l24 18 23-18v-27m-47 27l24-13 23 13"/>
+</g>
+</g>
+</svg>
