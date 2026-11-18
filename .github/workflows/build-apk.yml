@@ -78,6 +78,21 @@ jobs:
               print(out)
           PY
 
+      - name: Unpack family square cover photos
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, io, pathlib, zipfile
+          payload = pathlib.Path("artwork/boox_family_square_covers.zip.b64").read_text().strip()
+          folder = pathlib.Path("app/src/main/res/drawable-nodpi")
+          folder.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(io.BytesIO(base64.b64decode(payload))) as covers:
+              for name in ("ruslan", "anna", "amelia"):
+                  filename = "shelf_" + name + ".jpg"
+                  (folder / filename).write_bytes(covers.read(filename))
+                  print("Prepared " + filename)
+          PY
+
       - name: Build installable debug APK
         run: gradle --no-daemon :app:assembleDebug :uninstaller:assembleDebug
       - name: Publish APK artifact
